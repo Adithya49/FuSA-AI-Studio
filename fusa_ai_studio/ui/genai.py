@@ -159,6 +159,7 @@ def _local_quick_suggestions(feature: str, current_output: str) -> list[dict]:
                 f"Track a follow-up derived from: {summary_line[:180]}",
                 "Use this when the output does not map cleanly to a formal artifact.",
             )
+        )
 
     return suggestions[:3]
 
