@@ -8,6 +8,7 @@ import streamlit as st
 
 from fusa_ai_studio.ai.prompts import build_additions_prompt, build_follow_up_prompt
 from fusa_ai_studio.ui.components import source_list
+import hashlib
 
 
 T = TypeVar("T")
@@ -79,15 +80,26 @@ def render_ai_response_with_chat(services, project_id: str, feature: str, answer
     source_key = f"{panel_key}_source_text"
     messages_key = f"{panel_key}_messages"
 
-    # Initialize session state only once per panel to avoid overwriting
-    # user edits or follow-up revisions on rerun. This prevents a
-    # follow-up (e.g. "Suggest edits") from resetting the draft.
-    init_key = f"{panel_key}_initialized"
-    if not st.session_state.get(init_key):
-        st.session_state[source_key] = answer.text
-        st.session_state[draft_key] = answer.text
-        st.session_state[messages_key] = [{"role": "assistant", "content": answer.text}]
-        st.session_state[init_key] = True
+    # Track a stable hash of the original answer so we can detect when
+    # a genuinely new AI-generated output appears. When a new original
+    # answer appears, update the source; but only overwrite the user's
+    # draft/messages if the draft still matches the previous source
+    # (meaning the user hasn't edited or applied a follow-up revision).
+    source_hash_key = f"{panel_key}_source_hash"
+    prev_source = st.session_state.get(source_key)
+    prev_hash = st.session_state.get(source_hash_key)
+    answer_text = getattr(answer, "text", "") or ""
+    answer_hash = hashlib.sha256(answer_text.encode("utf-8")).hexdigest() if answer_text else None
+
+    if prev_hash != answer_hash:
+        # New original answer detected
+        draft = st.session_state.get(draft_key)
+        if draft is None or draft == prev_source:
+            st.session_state[draft_key] = answer_text
+            st.session_state[messages_key] = [{"role": "assistant", "content": answer_text}]
+        # Always update the canonical source and stored hash
+        st.session_state[source_key] = answer_text
+        st.session_state[source_hash_key] = answer_hash
 
     st.markdown(st.session_state[draft_key])
     st.caption(f"Provider: {answer.provider} · Model: {answer.model}")
