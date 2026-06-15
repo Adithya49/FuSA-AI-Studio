@@ -14,15 +14,7 @@ import hashlib
 T = TypeVar("T")
 
 
-FOLLOW_UP_OPTIONS = {
-    "Explain this output": "Explain the current output in plain language and call out the most important safety implications.",
-    "Suggest edits": "Suggest concrete edits that would improve clarity, traceability, and ISO 26262 rigor. Return a revised version and a short change log.",
-    "Rewrite for clarity": "Rewrite the current output so it reads like a concise safety engineering artifact while preserving meaning and traceability.",
-    "Highlight gaps": "Identify missing evidence, ambiguities, assumptions, and traceability gaps in the current output.",
-    "Custom question": "Ask a follow-up question about the current output.",
-}
-
-REVISION_MODES = {"Suggest edits", "Rewrite for clarity"}
+# Chat-based follow-ups removed per user request.
 
 ADD_DIALOG_FIELDS = {
     "item": ["name", "purpose", "boundaries", "interfaces", "assumptions"],
@@ -99,57 +91,19 @@ def render_ai_response_with_chat(services, project_id: str, feature: str, answer
         answer_hash = hashlib.sha256(answer_text.encode("utf-8")).hexdigest()
 
     if answer_text and prev_hash != answer_hash:
-        # New original answer detected
         draft = st.session_state.get(draft_key)
         if draft is None or draft == prev_source:
             st.session_state[draft_key] = answer_text
-            st.session_state[messages_key] = [{"role": "assistant", "content": answer_text}]
-        # Always update the canonical source and stored hash when we have a real answer
         st.session_state[source_key] = answer_text
         st.session_state[source_hash_key] = answer_hash
 
-    # Ensure draft and messages keys exist to avoid KeyError on widget-driven reruns
+    # Ensure draft key exists to avoid KeyError on widget-driven reruns
     st.session_state.setdefault(draft_key, answer_text)
-    st.session_state.setdefault(messages_key, [{"role": "assistant", "content": st.session_state.get(draft_key, "")}])
 
     st.markdown(st.session_state[draft_key])
     st.caption(f"Provider: {answer.provider} · Model: {answer.model}")
     source_list(answer.sources)
-
-    with st.expander("Chat about this output", expanded=False):
-        st.caption("Ask about the current output; responses will appear in the chat below.")
-
-        user_request = st.text_area(
-            "Ask about this output",
-            value="",
-            key=f"{panel_key}_chat_input",
-            height=120,
-        )
-
-        for message in st.session_state.get(messages_key, []):
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-
-        col1, _ = st.columns(2)
-        if col1.button("Send", key=f"{panel_key}_send"):
-            current_output = st.session_state[draft_key]
-            prompt = build_follow_up_prompt(feature, current_output, user_request, "Custom question", answer.sources)
-            provider = services.repo.get_setting("llm_provider", "Local")
-            model = services.repo.get_setting("llm_model", "fusa-local-deterministic")
-            response = services.rag.llm.generate(prompt, provider, model)
-            st.session_state[messages_key].append({"role": "user", "content": user_request})
-            st.session_state[messages_key].append({"role": "assistant", "content": response.text})
-            services.repo.store_ai_interaction(
-                project_id,
-                f"{feature} follow-up",
-                response.provider,
-                response.model,
-                user_request,
-                [{"id": "current_output", "content": current_output, "metadata": {"feature": feature, "mode": "chat"}}, *answer.sources],
-                response.text,
-            )
-            # Do NOT overwrite the draft; show the updated output in the chat only.
-            st.rerun()
+    # Chat UI removed — users interact with the displayed draft directly.
 
     render_ai_addition_suggestions(services, project_id, feature, answer, panel_key)
 
