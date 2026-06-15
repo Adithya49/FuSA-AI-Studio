@@ -96,3 +96,51 @@ Rules:
 - Prefer suggestions that can be added immediately with a prefilled form.
 - If no safe suggestion is available, return an empty suggestions array.
 """
+
+
+def build_quick_suggestions_prompt(feature: str, current_output: str) -> str:
+    """Build a compact prompt to generate quick-add suggestions directly from
+    the generated output. This must not rely on retrieved RAG context — use
+    only the `current_output`. Tailor suggestions to the feature (e.g. HARA,
+    item definition, FSC/tsc) so the model prefers appropriate artifact types.
+    """
+    normalized = feature.lower() if feature else ""
+    guidance = "Prefer general workflow tasks when the feature is unknown."
+    if "hara" in normalized:
+        guidance = "Prefer hazard candidates (artifact_type: hazard) and safety goals linked to hazards."
+    elif "item" in normalized:
+        guidance = "Prefer item definition suggestions (artifact_type: item) and clarifying assumptions/interfaces."
+    elif "safety" in normalized or "safety goal" in normalized:
+        guidance = "Prefer safety goal suggestions (artifact_type: safety_goal) and related FSC requirements."
+    elif "fsc" in normalized or "functional safety concept" in normalized:
+        guidance = "Prefer FSC requirement suggestions (artifact_type: fsc_requirement)."
+    elif "tsc" in normalized or "technical safety concept" in normalized:
+        guidance = "Prefer TSC requirement suggestions (artifact_type: tsc_requirement)."
+
+    return f"""{SYSTEM_PROMPT}
+
+Feature: {feature}
+
+Current generated output:
+{current_output}
+
+Task:
+From the current generated output above (use ONLY this text), suggest up to 3 addable project artifacts the user can create immediately. {guidance}
+
+Return JSON only using this schema:
+{{
+    "suggestions": [
+        {{
+            "artifact_type": "item|hazard|safety_goal|fsc_requirement|tsc_requirement|workflow_task",
+            "title": "Short card title",
+            "summary": "One-sentence reason the artifact should be added",
+            "hint": "Optional short guidance for the prefilled form"
+        }}
+    ]
+}}
+
+Rules:
+- Use only the provided `current_output` text; do not reference external sources.
+- Keep suggestions concise and actionable.
+- If no safe suggestion is available, return an empty suggestions array.
+"""

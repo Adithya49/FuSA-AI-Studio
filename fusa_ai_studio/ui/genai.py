@@ -101,15 +101,18 @@ def render_ai_response_with_chat(services, project_id: str, feature: str, answer
         # the suggestions renderer can read them without re-calling.
         suggestions_key = f"{panel_key}_suggestions"
         try:
-            prompt = build_additions_prompt(feature, answer_text, answer.sources)
-            response = services.rag.llm.generate(prompt, services.repo.get_setting("llm_provider", "Local"), services.repo.get_setting("llm_model", "fusa-local-deterministic"))
+            # Use a focused quick-suggestion prompt that uses only the generated
+            # output and tailors suggestions by the module/feature.
+            prompt = build_quick_suggestions_prompt(feature, answer_text)
+            provider = services.repo.get_setting("llm_provider", "Local")
+            model = services.repo.get_setting("llm_model", "fusa-local-deterministic")
+            response = services.rag.llm.generate(prompt, provider, model)
             try:
                 payload = json.loads(response.text)
                 st.session_state[suggestions_key] = payload.get("suggestions", [])
             except json.JSONDecodeError:
                 st.session_state[suggestions_key] = []
         except Exception:
-            # If suggestion generation fails, store empty list to avoid repeated attempts
             st.session_state[suggestions_key] = []
 
     # Ensure draft key exists to avoid KeyError on widget-driven reruns
