@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from fusa_ai_studio.core.asil import calculate_asil
-from fusa_ai_studio.core.config import detect_llm_provider
+from fusa_ai_studio.core.config import AppConfig
 from fusa_ai_studio.database.repository import Repository
-import os
 
 SAMPLE_KNOWLEDGE = """# ISO 26262 Practical Notes for EV Inverter Safety
 
@@ -17,7 +16,8 @@ RAG responses shall cite retrieved project knowledge and memory so safety engine
 """
 
 
-def seed_sample_data(repo: Repository, project_id: str) -> None:
+def seed_sample_data(repo: Repository, config: AppConfig) -> None:
+    project_id = config.default_project_id
     if repo.get_project(project_id):
         return
 
@@ -28,11 +28,11 @@ def seed_sample_data(repo: Repository, project_id: str) -> None:
         "ISO 26262:2018",
     )
     repo.set_setting("active_project_id", project_id)
-    repo.set_setting("llm_provider", detect_llm_provider())
-    repo.set_setting("llm_model", os.getenv("FUSA_LLM_MODEL", "fusa-local-deterministic"))
-    repo.set_setting("vector_backend", os.getenv("FUSA_VECTOR_BACKEND", "ChromaDB"))
-    repo.set_setting("embedding_model", os.getenv("FUSA_EMBEDDING_MODEL", "deterministic-hash-384"))
-    repo.set_setting("chunking_strategy", os.getenv("FUSA_CHUNKING_STRATEGY", "section"))
+    repo.set_setting("llm_provider", config.llm.provider)
+    repo.set_setting("llm_model", config.llm.model)
+    repo.set_setting("vector_backend", config.vector_backend)
+    repo.set_setting("embedding_model", config.embedding_model)
+    repo.set_setting("chunking_strategy", config.chunking_strategy)
 
     item_id = repo.insert(
         "items",

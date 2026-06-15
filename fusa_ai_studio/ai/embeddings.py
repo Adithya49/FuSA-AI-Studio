@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import math
-import os
 import re
 from dataclasses import dataclass
+
+from fusa_ai_studio.core.config import EmbeddingConfig
 
 
 @dataclass(frozen=True)
@@ -14,8 +15,9 @@ class EmbeddingResult:
 
 
 class EmbeddingEngine:
-    def __init__(self) -> None:
+    def __init__(self, config: EmbeddingConfig | None = None) -> None:
         self._sentence_models: dict[str, object] = {}
+        self.config = config or EmbeddingConfig()
 
     def embed(self, text: str, model: str = "deterministic-hash-384") -> EmbeddingResult:
         if model.startswith("sentence-transformers/"):
@@ -50,13 +52,13 @@ class EmbeddingEngine:
         return [float(value) for value in vector]
 
     def _openai(self, text: str, name: str) -> list[float]:
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = self.config.openai.api_key
         if not api_key:
             return self._deterministic_hash(text)
         try:
             from openai import OpenAI
 
-            client = OpenAI(api_key=api_key, base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
+            client = OpenAI(api_key=api_key, base_url=self.config.openai.base_url or "https://api.openai.com/v1")
             response = client.embeddings.create(model=name, input=text)
             return [float(value) for value in response.data[0].embedding]
         except Exception:

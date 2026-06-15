@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
+
+from fusa_ai_studio.core.config import LLMConfig
 
 
 LOCAL_MODEL_NAME = "fusa-local-deterministic"
@@ -17,6 +18,9 @@ class LLMResponse:
 
 
 class LLMClient:
+    def __init__(self, config: LLMConfig | None = None) -> None:
+        self.config = config or LLMConfig()
+
     def generate(self, prompt: str, provider: str, model: str) -> LLMResponse:
         provider_key = provider.lower()
         try:
@@ -29,34 +33,34 @@ class LLMClient:
             if provider_key == "ollama":
                 return self._ollama(prompt, model)
             if provider_key == "lm studio":
-                selected = self._model(model, "LM_STUDIO_MODEL", "local-model")
+                selected = self._model(model, self.config.lm_studio.model or self.config.local_model)
                 return self._openai_compatible(
                     selected,
                     prompt,
-                    os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1"),
-                    os.getenv("LM_STUDIO_API_KEY", "lm-studio"),
+                    self.config.lm_studio.base_url or "http://localhost:1234/v1",
+                    self.config.lm_studio.api_key or "lm-studio",
                     "LM Studio",
                 )
             if provider_key == "openrouter":
                 return self._openrouter(prompt, model)
         except Exception as exc:
             return LLMResponse(provider, model, self._local_response(prompt, f"Provider call failed: {exc}"), warning=str(exc))
-        selected = self._model(model, "LOCAL_MODEL", LOCAL_MODEL_NAME)
+        selected = self._model(model, self.config.local_model)
         return LLMResponse("Local", selected, self._local_response(prompt))
 
     def _openai(self, prompt: str, model: str) -> LLMResponse:
         from openai import OpenAI
 
-        selected = self._model(model, "OPENAI_MODEL", "gpt-4o-mini")
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        selected = self._model(model, self.config.openai.model or "gpt-4o-mini")
+        client = OpenAI(api_key=self.config.openai.api_key, base_url=self.config.openai.base_url or "https://api.openai.com/v1")
         response = client.chat.completions.create(model=selected, messages=[{"role": "user", "content": prompt}], temperature=0.2)
         return LLMResponse("OpenAI", selected, response.choices[0].message.content or "")
 
     def _claude(self, prompt: str, model: str) -> LLMResponse:
         import anthropic
 
-        selected = self._model(model, "ANTHROPIC_MODEL", "claude-3-5-sonnet-latest")
-        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), base_url=os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com"))
+        selected = self._model(model, self.config.claude.model or "claude-3-5-sonnet-latest")
+        client = anthropic.Anthropic(api_key=self.config.claude.api_key, base_url=self.config.claude.base_url or "https://api.anthropic.com")
         response = client.messages.create(model=selected, max_tokens=1400, temperature=0.2, messages=[{"role": "user", "content": prompt}])
         text = "\n".join(block.text for block in response.content if getattr(block, "type", "") == "text")
         return LLMResponse("Claude", selected, text)
@@ -64,23 +68,23 @@ class LLMClient:
     def _gemini(self, prompt: str, model: str) -> LLMResponse:
         from google import genai
 
-        selected = self._model(model, "GEMINI_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        selected = self._model(model, self.config.gemini.model or "gemini-2.5-flash")
+        client = genai.Client(api_key=self.config.gemini.api_key)
         response = client.models.generate_content(model=selected, contents=prompt)
         return LLMResponse("Gemini", selected, response.text or "")
 
     def _ollama(self, prompt: str, model: str) -> LLMResponse:
         import requests
 
-        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
-        selected = self._model(model, "OLLAMA_MODEL", "llama3.1")
+        base_url = (self.config.ollama.base_url or "http://localhost:11434").rstrip("/")
+        selected = self._model(model, self.config.ollama.model or "llama3.1")
         response = requests.post(f"{base_url}/api/generate", json={"model": selected, "prompt": prompt, "stream": False}, timeout=self._timeout())
         response.raise_for_status()
         return LLMResponse("Ollama", selected, response.json().get("response", ""))
 
     def _openrouter(self, prompt: str, model: str) -> LLMResponse:
-        selected = self._model(model, "OPENROUTER_MODEL", "openai/gpt-4o-mini")
-        return self._openai_compatible(selected, prompt, os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"), os.getenv("OPENROUTER_API_KEY", ""), "OpenRouter")
+        selected = self._model(model, self.config.openrouter.model or "openai/gpt-4o-mini")
+        return self._openai_compatible(selected, prompt, self.config.openrouter.base_url or "https://openrouter.ai/api/v1", self.config.openrouter.api_key, "OpenRouter")
 
     def _openai_compatible(self, model: str, prompt: str, base_url: str, api_key: str, provider: str) -> LLMResponse:
         from openai import OpenAI
@@ -89,16 +93,13 @@ class LLMClient:
         response = client.chat.completions.create(model=model, messages=[{"role": "user", "content": prompt}], temperature=0.2)
         return LLMResponse(provider, model, response.choices[0].message.content or "")
 
-    def _model(self, configured: str, env_name: str, default: str) -> str:
-        if configured and configured != LOCAL_MODEL_NAME:
+    def _model(self, configured: str, default: str) -> str:
+        if configured and configured != self.config.local_model:
             return configured
-        return os.getenv(env_name, default)
+        return default
 
     def _timeout(self) -> int:
-        try:
-            return int(os.getenv("FUSA_LLM_TIMEOUT_SECONDS", "120"))
-        except ValueError:
-            return 120
+        return self.config.timeout_seconds
 
     def _local_response(self, prompt: str, warning: str = "") -> str:
         if "Return JSON only" in prompt and "suggestions" in prompt:

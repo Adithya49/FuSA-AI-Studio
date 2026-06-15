@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 
 from fusa_ai_studio.ai.chunking import ChunkingEngine
 from fusa_ai_studio.ai.embeddings import EmbeddingEngine
 from fusa_ai_studio.ai.llm import LLMClient
 from fusa_ai_studio.ai.rag import RAGEngine
-from fusa_ai_studio.core.config import AppConfig, detect_llm_provider, get_config
+from fusa_ai_studio.core.config import AppConfig, get_config
 from fusa_ai_studio.core.sample_data import seed_sample_data
 from fusa_ai_studio.database.connection import initialize_database
 from fusa_ai_studio.database.repository import Repository
@@ -32,13 +31,7 @@ def build_services() -> Services:
     schema_path = config.root_dir / "fusa_ai_studio" / "database" / "schema.sql"
     initialize_database(config.db_path, schema_path)
     repo = Repository(config.db_path)
-    seed_sample_data(repo, config.default_project_id)
-
-    if not os.getenv("FUSA_LLM_PROVIDER"):
-        current_provider = repo.get_setting("llm_provider", "Local")
-        detected_provider = detect_llm_provider()
-        if current_provider == "Local" and detected_provider != "Local":
-            repo.set_setting("llm_provider", detected_provider)
+    seed_sample_data(repo, config)
 
     backend = repo.get_setting("vector_backend", "ChromaDB")
     collection_name = f"fusa_{config.default_project_id.replace('-', '_')}"
@@ -61,8 +54,8 @@ def build_services() -> Services:
     ) if not repo.list_table("vector_collections", config.default_project_id) else None
 
     chunking = ChunkingEngine()
-    embeddings = EmbeddingEngine()
-    llm = LLMClient()
+    embeddings = EmbeddingEngine(config.embeddings)
+    llm = LLMClient(config.llm)
     knowledge = KnowledgeBase(repo, chunking, embeddings, vector_store)
     knowledge.index_artifacts(config.default_project_id)
     knowledge.index_project(config.default_project_id)

@@ -133,3 +133,9 @@ Built for:
 - ADAS Safety Engineering
 - AI-Assisted Safety Analysis
 - AMD AI Hackathon
+
+---
+
+## Configuration
+
+Runtime settings now come from `config.json` in the project root. It stores the app paths, default project, vector and embedding defaults, and LLM provider credentials/model settings used by the AI services.
