@@ -117,12 +117,12 @@ def render_ai_response_with_chat(services, project_id: str, feature: str, answer
     source_list(answer.sources)
 
     with st.expander("Chat about this output", expanded=False):
-        st.caption("Use a preset or ask a custom question to explain or revise the current draft.")
-        mode = st.selectbox("Chat option", list(FOLLOW_UP_OPTIONS.keys()), key=f"{panel_key}_mode")
+        st.caption("Ask about the current output; responses will appear in the chat below.")
+
         user_request = st.text_area(
-            "Message to the LLM",
-            value=FOLLOW_UP_OPTIONS[mode],
-            key=f"{panel_key}_request",
+            "Ask about this output",
+            value="",
+            key=f"{panel_key}_chat_input",
             height=120,
         )
 
@@ -130,10 +130,10 @@ def render_ai_response_with_chat(services, project_id: str, feature: str, answer
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-        col1, col2 = st.columns(2)
-        if col1.button("Send to LLM", key=f"{panel_key}_send"):
+        col1, _ = st.columns(2)
+        if col1.button("Send", key=f"{panel_key}_send"):
             current_output = st.session_state[draft_key]
-            prompt = build_follow_up_prompt(feature, current_output, user_request, mode, answer.sources)
+            prompt = build_follow_up_prompt(feature, current_output, user_request, "Custom question", answer.sources)
             provider = services.repo.get_setting("llm_provider", "Local")
             model = services.repo.get_setting("llm_model", "fusa-local-deterministic")
             response = services.rag.llm.generate(prompt, provider, model)
@@ -145,16 +145,10 @@ def render_ai_response_with_chat(services, project_id: str, feature: str, answer
                 response.provider,
                 response.model,
                 user_request,
-                [{"id": "current_output", "content": current_output, "metadata": {"feature": feature, "mode": mode}}, *answer.sources],
+                [{"id": "current_output", "content": current_output, "metadata": {"feature": feature, "mode": "chat"}}, *answer.sources],
                 response.text,
             )
-            if mode in REVISION_MODES:
-                st.session_state[draft_key] = response.text
-            st.rerun()
-
-        if col2.button("Reset draft", key=f"{panel_key}_reset"):
-            st.session_state[draft_key] = st.session_state[source_key]
-            st.session_state[messages_key] = [{"role": "assistant", "content": st.session_state[source_key]}]
+            # Do NOT overwrite the draft; show the updated output in the chat only.
             st.rerun()
 
     render_ai_addition_suggestions(services, project_id, feature, answer, panel_key)

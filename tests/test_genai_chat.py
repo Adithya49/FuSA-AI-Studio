@@ -114,12 +114,11 @@ def main():
     answer = SimpleNamespace(text="Original answer", provider="Local", model="local", sources=[])
     panel_key = "testpanel"
     Fake.session_state.clear()
-    # Select 'Suggest edits' mode
-    Fake.session_state[f"{panel_key}_mode"] = "Suggest edits"
-    # Simulate pressing the Send button once
+    # Simulate entering a chat question and pressing Send
+    Fake.session_state[f"{panel_key}_chat_input"] = "Please suggest improvements"
     Fake._buttons[f"{panel_key}_send"] = True
 
-    # First run: should apply revision and set draft to revised text (RERUN raised)
+    # First run: send chat message; draft should NOT be changed, but chat should contain assistant response
     try:
         genai.render_ai_response_with_chat(services, "proj", "feature", answer, panel_key)
     except RuntimeError as exc:
@@ -127,9 +126,15 @@ def main():
             raise
 
     draft_key = f"{panel_key}_draft"
-    revised = Fake.session_state.get(draft_key)
-    if not revised or not revised.startswith("REVISED:"):
-        print("TEST FAILED: draft was not revised on first send")
+    messages_key = f"{panel_key}_messages"
+    draft = Fake.session_state.get(draft_key)
+    if draft != "Original answer":
+        print("TEST FAILED: draft was unexpectedly modified")
+        raise SystemExit(1)
+
+    assistant_msgs = [m for m in Fake.session_state.get(messages_key, []) if m.get("role") == "assistant"]
+    if not assistant_msgs or not assistant_msgs[-1].get("content", "").startswith("REVISED:"):
+        print("TEST FAILED: assistant response not present in chat")
         raise SystemExit(1)
 
     # Simulate rerun (no button press). This should NOT reset draft back to original.
@@ -140,7 +145,7 @@ def main():
             raise
 
     final = Fake.session_state.get(draft_key)
-    if final != revised:
+    if final != draft:
         print("TEST FAILED: draft was reset on rerun")
         raise SystemExit(1)
 
