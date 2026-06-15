@@ -89,15 +89,22 @@ def render_ai_response_with_chat(services, project_id: str, feature: str, answer
     prev_source = st.session_state.get(source_key)
     prev_hash = st.session_state.get(source_hash_key)
     answer_text = getattr(answer, "text", "") or ""
-    answer_hash = hashlib.sha256(answer_text.encode("utf-8")).hexdigest() if answer_text else None
 
-    if prev_hash != answer_hash:
+    # If the current answer is empty/blank, avoid changing session state.
+    # This prevents widget-driven reruns (e.g. selecting a follow-up mode)
+    # from clearing the draft when the top-level answer variable isn't set.
+    if not answer_text:
+        answer_hash = None
+    else:
+        answer_hash = hashlib.sha256(answer_text.encode("utf-8")).hexdigest()
+
+    if answer_text and prev_hash != answer_hash:
         # New original answer detected
         draft = st.session_state.get(draft_key)
         if draft is None or draft == prev_source:
             st.session_state[draft_key] = answer_text
             st.session_state[messages_key] = [{"role": "assistant", "content": answer_text}]
-        # Always update the canonical source and stored hash
+        # Always update the canonical source and stored hash when we have a real answer
         st.session_state[source_key] = answer_text
         st.session_state[source_hash_key] = answer_hash
 
