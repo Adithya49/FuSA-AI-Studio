@@ -6,8 +6,8 @@ import streamlit as st
 
 from fusa_ai_studio.core.services import Services
 from fusa_ai_studio.database.repository import now_iso
-from fusa_ai_studio.ui.components import data_table, source_list
-from fusa_ai_studio.ui.genai import run_genai_action
+from fusa_ai_studio.ui.components import data_table
+from fusa_ai_studio.ui.genai import render_ai_response_with_chat, run_genai_action
 from fusa_ai_studio.ui.workproduct_inputs import render_workproduct_inputs
 
 
@@ -70,7 +70,7 @@ def render(services: Services, project_id: str) -> None:
                     lambda: services.rag.ask(project_id, "Document Factory", "Generate an auditable safety case gap assessment with cited project context."),
                 )
                 body = answer.text
-                source_list(answer.sources)
+                render_ai_response_with_chat(services, project_id, "Document Factory", answer, "document_factory_ai")
             else:
                 body = f"# {doc_type}\n\n## Project\n{project.get('name', project_id)}\n\n{project.get('description', '')}\n\n## Artifact Summary\n{artifact_summary}\n\n## Traceability Summary\n{trace_summary}\n"
             safe_name = doc_type.lower().replace(" ", "_")

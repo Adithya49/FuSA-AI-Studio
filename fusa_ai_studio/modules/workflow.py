@@ -5,8 +5,8 @@ from datetime import date, timedelta
 import streamlit as st
 
 from fusa_ai_studio.core.services import Services
-from fusa_ai_studio.ui.components import data_table, source_list
-from fusa_ai_studio.ui.genai import run_genai_action
+from fusa_ai_studio.ui.components import data_table
+from fusa_ai_studio.ui.genai import render_ai_response_with_chat, run_genai_action
 from fusa_ai_studio.ui.workproduct_inputs import render_workproduct_inputs
 
 
@@ -45,7 +45,6 @@ def render(services: Services, project_id: str) -> None:
                 "Workflow Automation",
                 lambda: services.rag.ask(project_id, "Workflow Automation", "Propose prioritized workflow actions based on current artifact and traceability gaps."),
             )
-            st.markdown(answer.text)
-            source_list(answer.sources)
+            render_ai_response_with_chat(services, project_id, "Workflow Automation", answer, "workflow_ai")
     with records_tab:
         data_table(repo.list_table("workflow_tasks", project_id), "No workflow tasks recorded.")

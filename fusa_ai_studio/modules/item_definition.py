@@ -3,8 +3,8 @@ from __future__ import annotations
 import streamlit as st
 
 from fusa_ai_studio.core.services import Services
-from fusa_ai_studio.ui.components import data_table, source_list
-from fusa_ai_studio.ui.genai import run_genai_action
+from fusa_ai_studio.ui.components import data_table
+from fusa_ai_studio.ui.genai import render_ai_response_with_chat, run_genai_action
 from fusa_ai_studio.ui.workproduct_inputs import render_workproduct_inputs
 
 
@@ -45,7 +45,6 @@ def render(services: Services, project_id: str) -> None:
             rows = repo.list_table("items", project_id)
             question = "Review the current item definition for missing boundaries, interfaces, assumptions, and traceability risks."
             answer = run_genai_action("Item Definition", lambda: services.rag.ask(project_id, "Item Definition", question + "\n\nItems:\n" + str(rows)))
-            st.markdown(answer.text)
-            source_list(answer.sources)
+            render_ai_response_with_chat(services, project_id, "Item Definition", answer, "item_definition_ai")
     with records_tab:
         data_table(repo.list_table("items", project_id), "No item definitions recorded.")

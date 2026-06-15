@@ -3,7 +3,7 @@ from __future__ import annotations
 from fusa_ai_studio.core.asil import calculate_asil
 from fusa_ai_studio.core.config import detect_llm_provider
 from fusa_ai_studio.database.repository import Repository
-
+import os
 
 SAMPLE_KNOWLEDGE = """# ISO 26262 Practical Notes for EV Inverter Safety
 

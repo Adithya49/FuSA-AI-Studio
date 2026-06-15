@@ -4,8 +4,8 @@ import pandas as pd
 import streamlit as st
 
 from fusa_ai_studio.core.services import Services
-from fusa_ai_studio.ui.components import data_table, source_list
-from fusa_ai_studio.ui.genai import run_genai_action
+from fusa_ai_studio.ui.components import data_table
+from fusa_ai_studio.ui.genai import render_ai_response_with_chat, run_genai_action
 from fusa_ai_studio.ui.workproduct_inputs import render_workproduct_inputs
 
 
@@ -48,5 +48,4 @@ def render(services: Services, project_id: str) -> None:
                 "Traceability",
                 lambda: services.rag.ask(project_id, "Traceability", "Analyze traceability gaps and recommend the next links or evidence to create."),
             )
-            st.markdown(answer.text)
-            source_list(answer.sources)
+            render_ai_response_with_chat(services, project_id, "Traceability", answer, "traceability_ai")

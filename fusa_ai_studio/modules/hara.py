@@ -4,8 +4,8 @@ import streamlit as st
 
 from fusa_ai_studio.core.asil import calculate_asil
 from fusa_ai_studio.core.services import Services
-from fusa_ai_studio.ui.components import data_table, source_list
-from fusa_ai_studio.ui.genai import run_genai_action
+from fusa_ai_studio.ui.components import data_table
+from fusa_ai_studio.ui.genai import render_ai_response_with_chat, run_genai_action
 from fusa_ai_studio.ui.workproduct_inputs import render_workproduct_inputs
 
 
@@ -67,7 +67,6 @@ def render(services: Services, project_id: str) -> None:
                 "HARA",
                 lambda: services.rag.ask(project_id, "HARA", "Suggest safety goal candidates for the current HARA table. Include ASIL inheritance and safe-state hints."),
             )
-            st.markdown(answer.text)
-            source_list(answer.sources)
+            render_ai_response_with_chat(services, project_id, "HARA", answer, "hara_ai")
     with records_tab:
         data_table(repo.list_table("hazards", project_id), "No HARA rows recorded.")

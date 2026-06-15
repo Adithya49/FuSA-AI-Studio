@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 
@@ -100,6 +101,8 @@ class LLMClient:
             return 120
 
     def _local_response(self, prompt: str, warning: str = "") -> str:
+        if "Return JSON only" in prompt and "suggestions" in prompt:
+            return self._local_additions_response(prompt, warning)
         context = prompt.split("Retrieved context:", 1)[-1].split("Question:", 1)[0].strip()
         question = prompt.split("Question:", 1)[-1].strip()
         context_lines = [line.strip("- ").strip() for line in context.splitlines() if line.strip()][:8]
@@ -119,3 +122,52 @@ class LLMClient:
         if warning:
             answer.extend(["", f"Provider note: {warning}"])
         return "\n".join(answer)
+
+    def _local_additions_response(self, prompt: str, warning: str = "") -> str:
+        feature = prompt.split("Feature:", 1)[-1].split("Current generated output:", 1)[0].strip()
+        current_output = prompt.split("Current generated output:", 1)[-1].split("Relevant source context:", 1)[0].strip()
+        summary_line = current_output.splitlines()[0].strip() if current_output else f"Review the current {feature.lower()} output."
+
+        suggestion = {
+            "artifact_type": self._feature_artifact_type(feature),
+            "title": self._feature_title(feature),
+            "summary": summary_line[:220],
+            "hint": "Use the current project context as the base and refine the prefilled fields before adding it.",
+        }
+
+        payload = {"suggestions": [suggestion]}
+        if warning:
+            payload["warning"] = warning
+        return json.dumps(payload, indent=2)
+
+    def _feature_artifact_type(self, feature: str) -> str:
+        normalized = feature.lower()
+        if "hara" in normalized:
+            return "hazard"
+        if "safety goal" in normalized:
+            return "safety_goal"
+        if normalized == "fsc" or "functional safety concept" in normalized:
+            return "fsc_requirement"
+        if normalized == "tsc" or "technical safety concept" in normalized:
+            return "tsc_requirement"
+        if "trace" in normalized:
+            return "workflow_task"
+        if "item" in normalized:
+            return "item"
+        return "workflow_task"
+
+    def _feature_title(self, feature: str) -> str:
+        normalized = feature.lower()
+        if "hara" in normalized:
+            return "Add hazard candidate"
+        if "safety goal" in normalized:
+            return "Add safety goal candidate"
+        if normalized == "fsc" or "functional safety concept" in normalized:
+            return "Add FSC improvement"
+        if normalized == "tsc" or "technical safety concept" in normalized:
+            return "Add TSC improvement"
+        if "trace" in normalized:
+            return "Add follow-up action"
+        if "item" in normalized:
+            return "Add item definition"
+        return "Add follow-up action"

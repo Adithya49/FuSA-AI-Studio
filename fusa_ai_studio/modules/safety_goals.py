@@ -3,8 +3,8 @@ from __future__ import annotations
 import streamlit as st
 
 from fusa_ai_studio.core.services import Services
-from fusa_ai_studio.ui.components import data_table, source_list
-from fusa_ai_studio.ui.genai import run_genai_action
+from fusa_ai_studio.ui.components import data_table
+from fusa_ai_studio.ui.genai import render_ai_response_with_chat, run_genai_action
 from fusa_ai_studio.ui.workproduct_inputs import render_workproduct_inputs
 
 
@@ -53,7 +53,6 @@ def render(services: Services, project_id: str) -> None:
                 "Safety Goals",
                 lambda: services.rag.ask(project_id, "Safety Goals", "Review safety goals for verifiability, ASIL consistency, safe state, and missing hazard links."),
             )
-            st.markdown(answer.text)
-            source_list(answer.sources)
+            render_ai_response_with_chat(services, project_id, "Safety Goals", answer, "safety_goals_ai")
     with records_tab:
         data_table(repo.list_table("safety_goals", project_id), "No safety goals recorded.")

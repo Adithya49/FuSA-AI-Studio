@@ -4,7 +4,7 @@ import streamlit as st
 
 from fusa_ai_studio.core.services import Services
 from fusa_ai_studio.ui.components import data_table, source_list
-from fusa_ai_studio.ui.genai import run_genai_action
+from fusa_ai_studio.ui.genai import render_ai_response_with_chat, run_genai_action
 
 
 def render(services: Services, project_id: str) -> None:
@@ -14,9 +14,7 @@ def render(services: Services, project_id: str) -> None:
     feature = st.selectbox("Feature context", ["General", "Item Definition", "HARA", "Safety Goals", "FSC", "TSC", "Traceability", "Document Factory"])
     if st.button("Ask with RAG", type="primary"):
         answer = run_genai_action(feature, lambda: services.rag.ask(project_id, feature, question))
-        st.markdown(answer.text)
-        st.caption(f"Provider: {answer.provider} · Model: {answer.model}")
-        source_list(answer.sources)
+        render_ai_response_with_chat(services, project_id, feature, answer, "assistant_ai")
 
     st.markdown("### Project Memory")
     with st.form("memory_form"):
