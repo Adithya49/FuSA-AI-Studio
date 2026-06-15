@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import date
 import json
 from typing import TypeVar
 
@@ -164,6 +165,192 @@ def _local_quick_suggestions(feature: str, current_output: str) -> list[dict]:
     return suggestions[:3]
 
 
+def _direct_quick_add(services, project_id: str, feature: str, answer, suggestion: dict) -> tuple[str, str]:
+    """Create an artifact immediately from a quick suggestion."""
+    artifact_type = suggestion.get("artifact_type", "workflow_task")
+    summary = suggestion.get("summary", "").strip()
+    hint = suggestion.get("hint", "").strip()
+    title = suggestion.get("title", "").strip()
+
+    if artifact_type == "item":
+        item_id = services.repo.insert(
+            "items",
+            {
+                "project_id": project_id,
+                "name": title or "New item definition",
+                "purpose": summary or hint or "Created from quick suggestion.",
+                "boundaries": "Derived from the generated review output.",
+                "interfaces": "Derived from the generated review output.",
+                "assumptions": hint or "To be validated during review.",
+            },
+        )
+        services.repo.add_memory(project_id, "item_definition", f"Item {title or item_id}: {summary or hint}", 3)
+        services.knowledge.index_artifacts(project_id)
+        services.repo.store_ai_interaction(
+            project_id,
+            f"{feature} quick-add",
+            answer.provider,
+            answer.model,
+            title or "Add item definition",
+            [{"id": "suggestion", "content": json.dumps(suggestion)}],
+            f"Added item {item_id}",
+        )
+        return "item", str(item_id)
+
+    if artifact_type == "hazard":
+        items = services.repo.list_table("items", project_id)
+        item_id = items[0]["id"] if items else None
+        hazard_id = services.repo.insert(
+            "hazards",
+            {
+                "project_id": project_id,
+                "item_id": item_id,
+                "function_name": title or "Hazard candidate",
+                "malfunction": summary or hint or "Derived from HARA output.",
+                "operational_situation": "Derived from the generated review output.",
+                "hazardous_event": summary or hint or "Potential hazardous event identified by quick suggestion.",
+                "severity": 3,
+                "exposure": 4,
+                "controllability": 3,
+                "asil": "D",
+                "rationale": hint or "Added directly from quick suggestion.",
+            },
+        )
+        if item_id:
+            services.repo.add_trace(project_id, "item", str(item_id), "hazard", str(hazard_id), "analyzed_by", "Added from quick suggestion.")
+        services.repo.add_memory(project_id, "hara", f"{summary or hint} classified D.", 4)
+        services.knowledge.index_artifacts(project_id)
+        services.repo.store_ai_interaction(
+            project_id,
+            f"{feature} quick-add",
+            answer.provider,
+            answer.model,
+            title or "Add hazard",
+            [{"id": "suggestion", "content": json.dumps(suggestion)}],
+            f"Added hazard {hazard_id}",
+        )
+        return "hazard", str(hazard_id)
+
+    if artifact_type == "safety_goal":
+        hazards = services.repo.list_table("hazards", project_id)
+        hazard_id = hazards[0]["id"] if hazards else None
+        goal_code = f"SG-AUTO-{len(services.repo.list_table('safety_goals', project_id)) + 1:03d}"
+        sg_id = services.repo.insert(
+            "safety_goals",
+            {
+                "project_id": project_id,
+                "hazard_id": hazard_id,
+                "goal_code": goal_code,
+                "statement": summary or hint or "Derived from the generated review output.",
+                "asil": "D",
+                "safe_state": "To be defined",
+                "fault_tolerant_time": "To be defined",
+                "verification": "To be defined",
+            },
+        )
+        if hazard_id:
+            services.repo.add_trace(project_id, "hazard", str(hazard_id), "safety_goal", str(sg_id), "mitigated_by", "Added from quick suggestion.")
+        services.repo.add_memory(project_id, "safety_goal", f"{goal_code}: {summary or hint}", 4)
+        services.knowledge.index_artifacts(project_id)
+        services.repo.store_ai_interaction(
+            project_id,
+            f"{feature} quick-add",
+            answer.provider,
+            answer.model,
+            title or "Add safety goal",
+            [{"id": "suggestion", "content": json.dumps(suggestion)}],
+            f"Added safety goal {sg_id}",
+        )
+        return "safety_goal", str(sg_id)
+
+    if artifact_type == "fsc_requirement":
+        goals = services.repo.list_table("safety_goals", project_id)
+        goal_id = goals[0]["id"] if goals else None
+        req_code = f"FSC-AUTO-{len(services.repo.list_table('fsc_requirements', project_id)) + 1:03d}"
+        req_id = services.repo.insert(
+            "fsc_requirements",
+            {
+                "project_id": project_id,
+                "safety_goal_id": goal_id,
+                "req_code": req_code,
+                "statement": summary or hint or "Derived from the generated review output.",
+                "asil": "D",
+                "allocation": "To be defined",
+                "rationale": hint or "Added directly from quick suggestion.",
+                "verification": "To be defined",
+            },
+        )
+        if goal_id:
+            services.repo.add_trace(project_id, "safety_goal", str(goal_id), "fsc_requirement", str(req_id), "refined_by", "Added from quick suggestion.")
+        services.repo.add_memory(project_id, "fsc", f"{req_code}: {summary or hint}", 3)
+        services.knowledge.index_artifacts(project_id)
+        services.repo.store_ai_interaction(
+            project_id,
+            f"{feature} quick-add",
+            answer.provider,
+            answer.model,
+            title or "Add FSC requirement",
+            [{"id": "suggestion", "content": json.dumps(suggestion)}],
+            f"Added FSC requirement {req_id}",
+        )
+        return "fsc_requirement", str(req_id)
+
+    if artifact_type == "tsc_requirement":
+        fsc_rows = services.repo.list_table("fsc_requirements", project_id)
+        fsc_id = fsc_rows[0]["id"] if fsc_rows else None
+        req_code = f"TSC-AUTO-{len(services.repo.list_table('tsc_requirements', project_id)) + 1:03d}"
+        req_id = services.repo.insert(
+            "tsc_requirements",
+            {
+                "project_id": project_id,
+                "fsc_requirement_id": fsc_id,
+                "req_code": req_code,
+                "statement": summary or hint or "Derived from the generated review output.",
+                "asil": "D",
+                "component": "To be defined",
+                "diagnostic_mechanism": hint or "Added directly from quick suggestion.",
+                "verification": "To be defined",
+            },
+        )
+        if fsc_id:
+            services.repo.add_trace(project_id, "fsc_requirement", str(fsc_id), "tsc_requirement", str(req_id), "refined_by", "Added from quick suggestion.")
+        services.repo.add_memory(project_id, "tsc", f"{req_code}: {summary or hint}", 3)
+        services.knowledge.index_artifacts(project_id)
+        services.repo.store_ai_interaction(
+            project_id,
+            f"{feature} quick-add",
+            answer.provider,
+            answer.model,
+            title or "Add TSC requirement",
+            [{"id": "suggestion", "content": json.dumps(suggestion)}],
+            f"Added TSC requirement {req_id}",
+        )
+        return "tsc_requirement", str(req_id)
+
+    task_id = services.repo.insert(
+        "workflow_tasks",
+        {
+            "project_id": project_id,
+            "title": title or "Follow-up task",
+            "owner": "Safety Manager",
+            "status": "Open",
+            "due_date": date.today().isoformat(),
+            "evidence": summary or hint or "Added from quick suggestion.",
+        },
+    )
+    services.repo.add_memory(project_id, "workflow", f"{title or 'Follow-up task'} added from quick suggestion.", 2)
+    services.repo.store_ai_interaction(
+        project_id,
+        f"{feature} quick-add",
+        answer.provider,
+        answer.model,
+        title or "Add follow-up task",
+        [{"id": "suggestion", "content": json.dumps(suggestion)}],
+        f"Added task {task_id}",
+    )
+    return "workflow_task", str(task_id)
+
+
 def run_genai_action(label: str, action: Callable[[], T]) -> T:
     with st.status(f"{label}: preparing request", expanded=True) as status:
         status.write("Collecting project context and building prompt.")
@@ -231,8 +418,6 @@ def render_ai_response_with_chat(services, project_id: str, feature: str, answer
 
 def render_ai_addition_suggestions(services, project_id: str, feature: str, answer, panel_key: str) -> None:
     suggestions_key = f"{panel_key}_suggestions"
-    suggestion_state_key = f"{panel_key}_suggestion_state"
-    dialog_request_key = f"{panel_key}_dialog_request"
     answer_text = getattr(answer, "text", "") or ""
 
     # Render the suggestions already generated from the output/feature.
@@ -257,218 +442,8 @@ def render_ai_addition_suggestions(services, project_id: str, feature: str, answ
             if hint:
                 st.caption(hint)
         with columns[1]:
-            if st.button("+", key=f"{panel_key}_add_{index}"):
-                st.session_state[suggestion_state_key] = suggestion
-                st.session_state[dialog_request_key] = True
+            if st.button("Add", key=f"{panel_key}_add_{index}"):
+                added_type, added_id = _direct_quick_add(services, project_id, feature, answer, suggestion)
+                st.success(f"Added {added_type} {added_id}.")
                 st.rerun()
-
-    if st.session_state.get(dialog_request_key):
-        _render_add_dialog(services, project_id, feature, panel_key, answer, st.session_state[suggestion_state_key], dialog_request_key, suggestion_state_key)
-
-
-@_safe_dialog("Add suggested artifact")
-def _render_add_dialog(services, project_id: str, feature: str, panel_key: str, answer, suggestion: dict, dialog_request_key: str, suggestion_state_key: str) -> None:
-    artifact_type = suggestion.get("artifact_type", "workflow_task")
-    hint = suggestion.get("hint", "")
-    st.subheader(ADD_DIALOG_TITLES.get(artifact_type, "Suggested addition"))
-    st.caption(suggestion.get("summary", ""))
-    if hint:
-        st.caption(hint)
-
-    if artifact_type == "item":
-        name = st.text_input("Item name", suggestion.get("title", "New item"), key=f"{panel_key}_item_name")
-        purpose = st.text_area("Purpose", suggestion.get("summary", ""), key=f"{panel_key}_item_purpose")
-        boundaries = st.text_area("Boundaries", "", key=f"{panel_key}_item_boundaries")
-        interfaces = st.text_area("Interfaces", "", key=f"{panel_key}_item_interfaces")
-        assumptions = st.text_area("Assumptions", "", key=f"{panel_key}_item_assumptions")
-
-        if st.button("Proceed / Add", key=f"{panel_key}_item_add"):
-            item_id = services.repo.insert(
-                "items",
-                {
-                    "project_id": project_id,
-                    "name": name,
-                    "purpose": purpose,
-                    "boundaries": boundaries,
-                    "interfaces": interfaces,
-                    "assumptions": assumptions,
-                },
-            )
-            services.repo.add_memory(project_id, "item_definition", f"Item {name}: {purpose}", 3)
-            services.knowledge.index_artifacts(project_id)
-            services.repo.store_ai_interaction(project_id, f"{feature} quick-add", answer.provider, answer.model, suggestion.get("summary", ""), [{"id": "suggestion", "content": json.dumps(suggestion)}], f"Added item {item_id}")
-            st.session_state[dialog_request_key] = False
-            st.session_state.pop(suggestion_state_key, None)
-            st.success("Item added.")
-            st.rerun()
-        return
-
-    if artifact_type == "hazard":
-        hazards = services.repo.list_table("hazards", project_id)
-        items = services.repo.list_table("items", project_id)
-        item_options = {f"{item['id']} · {item['name']}": item["id"] for item in items}
-        item_label = st.selectbox("Linked item", list(item_options.keys()) or ["No item"], key=f"{panel_key}_hazard_item")
-        function_name = st.text_input("Function", suggestion.get("title", "Hazard function"), key=f"{panel_key}_hazard_function")
-        malfunction = st.text_input("Malfunction", suggestion.get("summary", ""), key=f"{panel_key}_hazard_malfunction")
-        situation = st.text_input("Operational situation", "", key=f"{panel_key}_hazard_situation")
-        event = st.text_area("Hazardous event", "", key=f"{panel_key}_hazard_event")
-        col1, col2, col3 = st.columns(3)
-        severity = col1.slider("Severity", 0, 3, 3, key=f"{panel_key}_hazard_severity")
-        exposure = col2.slider("Exposure", 0, 4, 4, key=f"{panel_key}_hazard_exposure")
-        controllability = col3.slider("Controllability", 0, 3, 3, key=f"{panel_key}_hazard_controllability")
-        asil = st.selectbox("ASIL", ["QM", "A", "B", "C", "D"], index=4, key=f"{panel_key}_hazard_asil")
-        rationale = st.text_area("Rationale", suggestion.get("hint", ""), key=f"{panel_key}_hazard_rationale")
-        if st.button("Proceed / Add", key=f"{panel_key}_hazard_add"):
-            hazard_id = services.repo.insert(
-                "hazards",
-                {
-                    "project_id": project_id,
-                    "item_id": item_options.get(item_label),
-                    "function_name": function_name,
-                    "malfunction": malfunction,
-                    "operational_situation": situation,
-                    "hazardous_event": event,
-                    "severity": severity,
-                    "exposure": exposure,
-                    "controllability": controllability,
-                    "asil": asil,
-                    "rationale": rationale,
-                },
-            )
-            if item_options.get(item_label):
-                services.repo.add_trace(project_id, "item", str(item_options[item_label]), "hazard", str(hazard_id), "analyzed_by", "Added from AI suggestion dialog.")
-            services.repo.add_memory(project_id, "hara", f"{malfunction} in {situation} classified {asil}.", 4)
-            services.knowledge.index_artifacts(project_id)
-            st.session_state[dialog_request_key] = False
-            st.session_state.pop(suggestion_state_key, None)
-            st.success("Hazard added.")
-            st.rerun()
-        return
-
-    if artifact_type == "safety_goal":
-        hazards = services.repo.list_table("hazards", project_id)
-        hazard_options = {f"{hazard['id']} · {hazard['malfunction']} · {hazard['asil']}": hazard for hazard in hazards}
-        hazard_label = st.selectbox("Linked hazard", list(hazard_options.keys()) or ["No hazard"], key=f"{panel_key}_sg_hazard")
-        hazard = hazard_options.get(hazard_label, {})
-        goal_code = st.text_input("Goal code", suggestion.get("title", "SG-NEW"), key=f"{panel_key}_sg_code")
-        statement = st.text_area("Statement", suggestion.get("summary", ""), key=f"{panel_key}_sg_statement")
-        asil = st.selectbox("ASIL", ["QM", "A", "B", "C", "D"], index=4, key=f"{panel_key}_sg_asil")
-        safe_state = st.text_input("Safe state", "", key=f"{panel_key}_sg_safe_state")
-        ftt = st.text_input("Fault tolerant time", "", key=f"{panel_key}_sg_ftt")
-        verification = st.text_area("Verification", "", key=f"{panel_key}_sg_verification")
-        if st.button("Proceed / Add", key=f"{panel_key}_sg_add"):
-            sg_id = services.repo.insert(
-                "safety_goals",
-                {
-                    "project_id": project_id,
-                    "hazard_id": hazard.get("id"),
-                    "goal_code": goal_code,
-                    "statement": statement,
-                    "asil": asil,
-                    "safe_state": safe_state,
-                    "fault_tolerant_time": ftt,
-                    "verification": verification,
-                },
-            )
-            if hazard.get("id"):
-                services.repo.add_trace(project_id, "hazard", str(hazard["id"]), "safety_goal", str(sg_id), "mitigated_by", "Added from AI suggestion dialog.")
-            services.repo.add_memory(project_id, "safety_goal", f"{goal_code}: {statement}", 4)
-            services.knowledge.index_artifacts(project_id)
-            st.session_state[dialog_request_key] = False
-            st.session_state.pop(suggestion_state_key, None)
-            st.success("Safety goal added.")
-            st.rerun()
-        return
-
-    if artifact_type == "fsc_requirement":
-        goals = services.repo.list_table("safety_goals", project_id)
-        goal_options = {f"{goal['id']} · {goal['goal_code']} · {goal['asil']}": goal for goal in goals}
-        goal_label = st.selectbox("Linked safety goal", list(goal_options.keys()) or ["No safety goal"], key=f"{panel_key}_fsc_goal")
-        goal = goal_options.get(goal_label, {})
-        req_code = st.text_input("Requirement code", suggestion.get("title", "FSC-NEW"), key=f"{panel_key}_fsc_code")
-        statement = st.text_area("Statement", suggestion.get("summary", ""), key=f"{panel_key}_fsc_statement")
-        asil = st.selectbox("ASIL", ["QM", "A", "B", "C", "D"], index=4, key=f"{panel_key}_fsc_asil")
-        allocation = st.text_input("Allocation", "", key=f"{panel_key}_fsc_allocation")
-        rationale = st.text_area("Rationale", suggestion.get("hint", ""), key=f"{panel_key}_fsc_rationale")
-        verification = st.text_area("Verification", "", key=f"{panel_key}_fsc_verification")
-        if st.button("Proceed / Add", key=f"{panel_key}_fsc_add"):
-            req_id = services.repo.insert(
-                "fsc_requirements",
-                {
-                    "project_id": project_id,
-                    "safety_goal_id": goal.get("id"),
-                    "req_code": req_code,
-                    "statement": statement,
-                    "asil": asil,
-                    "allocation": allocation,
-                    "rationale": rationale,
-                    "verification": verification,
-                },
-            )
-            if goal.get("id"):
-                services.repo.add_trace(project_id, "safety_goal", str(goal["id"]), "fsc_requirement", str(req_id), "refined_by", "Added from AI suggestion dialog.")
-            services.repo.add_memory(project_id, "fsc", f"{req_code}: {statement}", 3)
-            services.knowledge.index_artifacts(project_id)
-            st.session_state[dialog_request_key] = False
-            st.session_state.pop(suggestion_state_key, None)
-            st.success("FSC requirement added.")
-            st.rerun()
-        return
-
-    if artifact_type == "tsc_requirement":
-        fsc_rows = services.repo.list_table("fsc_requirements", project_id)
-        fsc_options = {f"{row['id']} · {row['req_code']} · {row['asil']}": row for row in fsc_rows}
-        fsc_label = st.selectbox("Linked FSC requirement", list(fsc_options.keys()) or ["No FSC requirement"], key=f"{panel_key}_tsc_fsc")
-        fsc = fsc_options.get(fsc_label, {})
-        req_code = st.text_input("Requirement code", suggestion.get("title", "TSC-NEW"), key=f"{panel_key}_tsc_code")
-        statement = st.text_area("Statement", suggestion.get("summary", ""), key=f"{panel_key}_tsc_statement")
-        asil = st.selectbox("ASIL", ["QM", "A", "B", "C", "D"], index=4, key=f"{panel_key}_tsc_asil")
-        component = st.text_input("Component", "", key=f"{panel_key}_tsc_component")
-        diagnostic = st.text_area("Diagnostic mechanism", "", key=f"{panel_key}_tsc_diagnostic")
-        verification = st.text_area("Verification", "", key=f"{panel_key}_tsc_verification")
-        if st.button("Proceed / Add", key=f"{panel_key}_tsc_add"):
-            req_id = services.repo.insert(
-                "tsc_requirements",
-                {
-                    "project_id": project_id,
-                    "fsc_requirement_id": fsc.get("id"),
-                    "req_code": req_code,
-                    "statement": statement,
-                    "asil": asil,
-                    "component": component,
-                    "diagnostic_mechanism": diagnostic,
-                    "verification": verification,
-                },
-            )
-            if fsc.get("id"):
-                services.repo.add_trace(project_id, "fsc_requirement", str(fsc["id"]), "tsc_requirement", str(req_id), "refined_by", "Added from AI suggestion dialog.")
-            services.repo.add_memory(project_id, "tsc", f"{req_code}: {statement}", 3)
-            services.knowledge.index_artifacts(project_id)
-            st.session_state[dialog_request_key] = False
-            st.session_state.pop(suggestion_state_key, None)
-            st.success("TSC requirement added.")
-            st.rerun()
-        return
-
-    title = st.text_input("Task title", suggestion.get("title", "Follow-up task"), key=f"{panel_key}_task_title")
-    owner = st.text_input("Owner", "Safety Manager", key=f"{panel_key}_task_owner")
-    status = st.selectbox("Status", ["Open", "In Progress", "Blocked", "Done"], key=f"{panel_key}_task_status")
-    due_date = st.date_input("Due date", key=f"{panel_key}_task_due")
-    evidence = st.text_area("Evidence", suggestion.get("hint", ""), key=f"{panel_key}_task_evidence")
-    if st.button("Proceed / Add", key=f"{panel_key}_task_add"):
-        services.repo.insert(
-            "workflow_tasks",
-            {
-                "project_id": project_id,
-                "title": title,
-                "owner": owner,
-                "status": status,
-                "due_date": due_date.isoformat(),
-                "evidence": evidence,
-            },
-        )
-        services.repo.add_memory(project_id, "workflow", f"{title} assigned to {owner} due {due_date.isoformat()}.", 2)
-        st.session_state[dialog_request_key] = False
-        st.session_state.pop(suggestion_state_key, None)
-        st.success("Task added.")
-        st.rerun()
+    # No secondary form is shown. Suggestions create artifacts immediately.
