@@ -108,6 +108,10 @@ def render_ai_response_with_chat(services, project_id: str, feature: str, answer
         st.session_state[source_key] = answer_text
         st.session_state[source_hash_key] = answer_hash
 
+    # Ensure draft and messages keys exist to avoid KeyError on widget-driven reruns
+    st.session_state.setdefault(draft_key, answer_text)
+    st.session_state.setdefault(messages_key, [{"role": "assistant", "content": st.session_state.get(draft_key, "")}])
+
     st.markdown(st.session_state[draft_key])
     st.caption(f"Provider: {answer.provider} · Model: {answer.model}")
     source_list(answer.sources)
@@ -160,14 +164,19 @@ def render_ai_addition_suggestions(services, project_id: str, feature: str, answ
     suggestions_key = f"{panel_key}_suggestions"
     suggestion_state_key = f"{panel_key}_suggestion_state"
     dialog_request_key = f"{panel_key}_dialog_request"
+    answer_text = getattr(answer, "text", "") or ""
 
+    # Only generate quick-add suggestions when we have a non-empty original answer
     if st.session_state.get(suggestions_key) is None:
-        prompt = build_additions_prompt(feature, answer.text, answer.sources)
-        response = services.rag.llm.generate(prompt, services.repo.get_setting("llm_provider", "Local"), services.repo.get_setting("llm_model", "fusa-local-deterministic"))
-        try:
-            payload = json.loads(response.text)
-            st.session_state[suggestions_key] = payload.get("suggestions", [])
-        except json.JSONDecodeError:
+        if answer_text:
+            prompt = build_additions_prompt(feature, answer_text, answer.sources)
+            response = services.rag.llm.generate(prompt, services.repo.get_setting("llm_provider", "Local"), services.repo.get_setting("llm_model", "fusa-local-deterministic"))
+            try:
+                payload = json.loads(response.text)
+                st.session_state[suggestions_key] = payload.get("suggestions", [])
+            except json.JSONDecodeError:
+                st.session_state[suggestions_key] = []
+        else:
             st.session_state[suggestions_key] = []
 
     suggestions = st.session_state.get(suggestions_key, [])
