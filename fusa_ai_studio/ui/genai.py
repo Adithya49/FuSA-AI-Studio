@@ -79,10 +79,15 @@ def render_ai_response_with_chat(services, project_id: str, feature: str, answer
     source_key = f"{panel_key}_source_text"
     messages_key = f"{panel_key}_messages"
 
-    if st.session_state.get(source_key) != answer.text:
+    # Initialize session state only once per panel to avoid overwriting
+    # user edits or follow-up revisions on rerun. This prevents a
+    # follow-up (e.g. "Suggest edits") from resetting the draft.
+    init_key = f"{panel_key}_initialized"
+    if not st.session_state.get(init_key):
         st.session_state[source_key] = answer.text
         st.session_state[draft_key] = answer.text
         st.session_state[messages_key] = [{"role": "assistant", "content": answer.text}]
+        st.session_state[init_key] = True
 
     st.markdown(st.session_state[draft_key])
     st.caption(f"Provider: {answer.provider} · Model: {answer.model}")
