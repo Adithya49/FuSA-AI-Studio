@@ -6,7 +6,7 @@ from typing import TypeVar
 
 import streamlit as st
 
-from fusa_ai_studio.ai.prompts import build_additions_prompt, build_follow_up_prompt
+from fusa_ai_studio.ai.prompts import build_quick_suggestions_prompt
 from fusa_ai_studio.ui.components import source_list
 import hashlib
 
@@ -135,8 +135,12 @@ def render_ai_addition_suggestions(services, project_id: str, feature: str, answ
     # Only generate quick-add suggestions when we have a non-empty original answer
     if st.session_state.get(suggestions_key) is None:
         if answer_text:
-            prompt = build_additions_prompt(feature, answer_text, answer.sources)
-            response = services.rag.llm.generate(prompt, services.repo.get_setting("llm_provider", "Local"), services.repo.get_setting("llm_model", "fusa-local-deterministic"))
+            prompt = build_quick_suggestions_prompt(feature, answer_text)
+            response = services.rag.llm.generate(
+                prompt,
+                services.repo.get_setting("llm_provider", "Local"),
+                services.repo.get_setting("llm_model", "fusa-local-deterministic"),
+            )
             try:
                 payload = json.loads(response.text)
                 st.session_state[suggestions_key] = payload.get("suggestions", [])
