@@ -96,6 +96,21 @@ def render_ai_response_with_chat(services, project_id: str, feature: str, answer
             st.session_state[draft_key] = answer_text
         st.session_state[source_key] = answer_text
         st.session_state[source_hash_key] = answer_hash
+        # Generate quick-add suggestions once, immediately after a new
+        # original answer is produced. Store them in session state so
+        # the suggestions renderer can read them without re-calling.
+        suggestions_key = f"{panel_key}_suggestions"
+        try:
+            prompt = build_additions_prompt(feature, answer_text, answer.sources)
+            response = services.rag.llm.generate(prompt, services.repo.get_setting("llm_provider", "Local"), services.repo.get_setting("llm_model", "fusa-local-deterministic"))
+            try:
+                payload = json.loads(response.text)
+                st.session_state[suggestions_key] = payload.get("suggestions", [])
+            except json.JSONDecodeError:
+                st.session_state[suggestions_key] = []
+        except Exception:
+            # If suggestion generation fails, store empty list to avoid repeated attempts
+            st.session_state[suggestions_key] = []
 
     # Ensure draft key exists to avoid KeyError on widget-driven reruns
     st.session_state.setdefault(draft_key, answer_text)
