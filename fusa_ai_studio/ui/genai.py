@@ -6,7 +6,6 @@ from typing import TypeVar
 
 import streamlit as st
 
-from fusa_ai_studio.ai.prompts import build_quick_suggestions_prompt
 from fusa_ai_studio.ui.components import source_list
 import hashlib
 
@@ -43,6 +42,125 @@ def _safe_dialog(title: str):
 
         return passthrough
     return dialog(title)
+
+
+def _local_quick_suggestions(feature: str, current_output: str) -> list[dict]:
+    """Generate quick-add suggestions without calling the LLM.
+
+    This keeps suggestions deterministic and ensures the UI always has
+    at least one actionable suggestion for common modules.
+    """
+    normalized_feature = (feature or "").lower()
+    output_lines = [line.strip() for line in current_output.splitlines() if line.strip()]
+    summary_line = output_lines[0] if output_lines else current_output.strip()
+    if not summary_line:
+        summary_line = f"Review the current {feature.lower()} output and extract a follow-up artifact."
+
+    def make(title: str, artifact_type: str, summary: str, hint: str = "") -> dict:
+        return {
+            "artifact_type": artifact_type,
+            "title": title,
+            "summary": summary,
+            "hint": hint,
+        }
+
+    suggestions: list[dict] = []
+
+    if "hara" in normalized_feature:
+        suggestions.append(
+            make(
+                "Add hazard candidate",
+                "hazard",
+                f"The HARA output suggests a traceable hazard based on: {summary_line[:180]}",
+                "Prefill severity, exposure, controllability, and ASIL from the review text.",
+            )
+        )
+        suggestions.append(
+            make(
+                "Add linked safety goal",
+                "safety_goal",
+                "Convert the hazard into a safety goal with a safe state and verification intent.",
+                "Tie the goal directly to the hazard and preserve ASIL rationale.",
+            )
+        )
+    elif "item" in normalized_feature:
+        suggestions.append(
+            make(
+                "Refine item definition",
+                "item",
+                f"Turn the item review into a better item definition using: {summary_line[:180]}",
+                "Use the generated output to improve purpose, boundaries, interfaces, and assumptions.",
+            )
+        )
+        suggestions.append(
+            make(
+                "Add follow-up task",
+                "workflow_task",
+                "Capture the remaining item-definition work as a tracked task.",
+                "Assign an owner and due date to close the gaps from the review.",
+            )
+        )
+    elif "fsc" in normalized_feature or "functional safety concept" in normalized_feature:
+        suggestions.append(
+            make(
+                "Add FSC requirement",
+                "fsc_requirement",
+                f"Promote the FSC review into a concrete requirement from: {summary_line[:180]}",
+                "Prefill allocation, ASIL, rationale, and verification.",
+            )
+        )
+        suggestions.append(
+            make(
+                "Add safety goal link",
+                "safety_goal",
+                "Ensure the FSC remains traceable to the governing safety goal.",
+                "Link the requirement to the most relevant safety goal.",
+            )
+        )
+    elif "tsc" in normalized_feature or "technical safety concept" in normalized_feature:
+        suggestions.append(
+            make(
+                "Add TSC requirement",
+                "tsc_requirement",
+                f"Convert the TSC review into a component-level requirement from: {summary_line[:180]}",
+                "Prefill the component, diagnostic mechanism, and verification fields.",
+            )
+        )
+        suggestions.append(
+            make(
+                "Add implementation task",
+                "workflow_task",
+                "Track the implementation work needed to realize the TSC update.",
+                "Assign the action to the relevant owner.",
+            )
+        )
+    elif "safety goal" in normalized_feature or "safety" in normalized_feature:
+        suggestions.append(
+            make(
+                "Refine safety goal",
+                "safety_goal",
+                f"Use the review text to strengthen the safety goal: {summary_line[:180]}",
+                "Make the statement more verifiable and explicit.",
+            )
+        )
+        suggestions.append(
+            make(
+                "Add traceability task",
+                "workflow_task",
+                "Record the remaining evidence and traceability work for this safety goal.",
+                "Add owner, status, and due date.",
+            )
+        )
+    else:
+        suggestions.append(
+            make(
+                "Add follow-up task",
+                "workflow_task",
+                f"Track a follow-up derived from: {summary_line[:180]}",
+                "Use this when the output does not map cleanly to a formal artifact.",
+            )
+
+    return suggestions[:3]
 
 
 def run_genai_action(label: str, action: Callable[[], T]) -> T:
@@ -96,24 +214,8 @@ def render_ai_response_with_chat(services, project_id: str, feature: str, answer
             st.session_state[draft_key] = answer_text
         st.session_state[source_key] = answer_text
         st.session_state[source_hash_key] = answer_hash
-        # Generate quick-add suggestions once, immediately after a new
-        # original answer is produced. Store them in session state so
-        # the suggestions renderer can read them without re-calling.
         suggestions_key = f"{panel_key}_suggestions"
-        try:
-            # Use a focused quick-suggestion prompt that uses only the generated
-            # output and tailors suggestions by the module/feature.
-            prompt = build_quick_suggestions_prompt(feature, answer_text)
-            provider = services.repo.get_setting("llm_provider", "Local")
-            model = services.repo.get_setting("llm_model", "fusa-local-deterministic")
-            response = services.rag.llm.generate(prompt, provider, model)
-            try:
-                payload = json.loads(response.text)
-                st.session_state[suggestions_key] = payload.get("suggestions", [])
-            except json.JSONDecodeError:
-                st.session_state[suggestions_key] = []
-        except Exception:
-            st.session_state[suggestions_key] = []
+        st.session_state[suggestions_key] = _local_quick_suggestions(feature, answer_text)
 
     # Ensure draft key exists to avoid KeyError on widget-driven reruns
     st.session_state.setdefault(draft_key, answer_text)
@@ -132,22 +234,9 @@ def render_ai_addition_suggestions(services, project_id: str, feature: str, answ
     dialog_request_key = f"{panel_key}_dialog_request"
     answer_text = getattr(answer, "text", "") or ""
 
-    # Only generate quick-add suggestions when we have a non-empty original answer
+    # Render the suggestions already generated from the output/feature.
     if st.session_state.get(suggestions_key) is None:
-        if answer_text:
-            prompt = build_quick_suggestions_prompt(feature, answer_text)
-            response = services.rag.llm.generate(
-                prompt,
-                services.repo.get_setting("llm_provider", "Local"),
-                services.repo.get_setting("llm_model", "fusa-local-deterministic"),
-            )
-            try:
-                payload = json.loads(response.text)
-                st.session_state[suggestions_key] = payload.get("suggestions", [])
-            except json.JSONDecodeError:
-                st.session_state[suggestions_key] = []
-        else:
-            st.session_state[suggestions_key] = []
+        st.session_state[suggestions_key] = _local_quick_suggestions(feature, answer_text) if answer_text else []
 
     suggestions = st.session_state.get(suggestions_key, [])
     if not suggestions:
