@@ -409,7 +409,17 @@ def render_ai_response_with_chat(services, project_id: str, feature: str, answer
     st.session_state.setdefault(draft_key, answer_text)
 
     st.markdown(st.session_state[draft_key])
-    st.caption(f"Provider: {answer.provider} · Model: {answer.model}")
+    caption_items = [f"Provider: {answer.provider}", f"Model: {answer.model}"]
+    if getattr(answer, "tokens_in", None) is not None or getattr(answer, "tokens_out", None) is not None or getattr(answer, "tokens_total", None) is not None:
+        tokens_in = getattr(answer, "tokens_in", None) or 0
+        tokens_out = getattr(answer, "tokens_out", None) or 0
+        tokens_total = getattr(answer, "tokens_total", None) or tokens_in + tokens_out
+        caption_items.append(f"Tokens (In/Out/Total): {tokens_in:,} / {tokens_out:,} / {tokens_total:,}")
+    if getattr(answer, "latency_seconds", None) is not None:
+        caption_items.append(f"Latency: {answer.latency_seconds:.2f}s")
+    if getattr(answer, "gpu", ""):
+        caption_items.append(f"GPU: {answer.gpu}")
+    st.caption(" • ".join(caption_items))
     source_list(answer.sources)
     # Chat UI removed — users interact with the displayed draft directly.
 

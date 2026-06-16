@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, replace
 
 from fusa_ai_studio.core.config import LLMConfig
 
@@ -15,6 +16,11 @@ class LLMResponse:
     model: str
     text: str
     warning: str = ""
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    tokens_total: int | None = None
+    latency_seconds: float | None = None
+    gpu: str = ""
 
 
 class LLMClient:
@@ -22,31 +28,42 @@ class LLMClient:
         self.config = config or LLMConfig()
 
     def generate(self, prompt: str, provider: str, model: str) -> LLMResponse:
+        start = time.perf_counter()
         provider_key = provider.lower()
         try:
             if provider_key == "openai":
-                return self._openai(prompt, model)
-            if provider_key == "claude":
-                return self._claude(prompt, model)
-            if provider_key == "gemini":
-                return self._gemini(prompt, model)
-            if provider_key == "ollama":
-                return self._ollama(prompt, model)
-            if provider_key == "lm studio":
+                result = self._openai(prompt, model)
+            elif provider_key == "claude":
+                result = self._claude(prompt, model)
+            elif provider_key == "gemini":
+                result = self._gemini(prompt, model)
+            elif provider_key == "ollama":
+                result = self._ollama(prompt, model)
+            elif provider_key == "lm studio":
                 selected = self._model(model, self.config.lm_studio.model or self.config.local_model)
-                return self._openai_compatible(
+                result = self._openai_compatible(
                     selected,
                     prompt,
                     self.config.lm_studio.base_url or "http://localhost:1234/v1",
                     self.config.lm_studio.api_key or "lm-studio",
                     "LM Studio",
                 )
-            if provider_key == "openrouter":
-                return self._openrouter(prompt, model)
+            elif provider_key == "openrouter":
+                result = self._openrouter(prompt, model)
+            else:
+                selected = self._model(model, self.config.local_model)
+                result = LLMResponse("Local", selected, self._local_response(prompt))
         except Exception as exc:
-            return LLMResponse(provider, model, self._local_response(prompt, f"Provider call failed: {exc}"), warning=str(exc))
-        selected = self._model(model, self.config.local_model)
-        return LLMResponse("Local", selected, self._local_response(prompt))
+            latency = time.perf_counter() - start
+            return replace(
+                LLMResponse(provider, model, self._local_response(prompt, f"Provider call failed: {exc}"), warning=str(exc)),
+                latency_seconds=latency,
+            )
+
+        latency = time.perf_counter() - start
+        if isinstance(result, LLMResponse) and result.latency_seconds is None:
+            result = replace(result, latency_seconds=latency)
+        return result
 
     def _openai(self, prompt: str, model: str) -> LLMResponse:
         from openai import OpenAI
@@ -54,7 +71,11 @@ class LLMClient:
         selected = self._model(model, self.config.openai.model or "gpt-4o-mini")
         client = OpenAI(api_key=self.config.openai.api_key, base_url=self.config.openai.base_url or "https://api.openai.com/v1")
         response = client.chat.completions.create(model=selected, messages=[{"role": "user", "content": prompt}], temperature=0.2)
-        return LLMResponse("OpenAI", selected, response.choices[0].message.content or "")
+        usage = getattr(response, "usage", None)
+        tokens_in = getattr(usage, "prompt_tokens", None) if usage is not None else None
+        tokens_out = getattr(usage, "completion_tokens", None) if usage is not None else None
+        tokens_total = getattr(usage, "total_tokens", None) if usage is not None else None
+        return LLMResponse("OpenAI", selected, response.choices[0].message.content or "", tokens_in=tokens_in, tokens_out=tokens_out, tokens_total=tokens_total)
 
     def _claude(self, prompt: str, model: str) -> LLMResponse:
         import anthropic
@@ -63,7 +84,11 @@ class LLMClient:
         client = anthropic.Anthropic(api_key=self.config.claude.api_key, base_url=self.config.claude.base_url or "https://api.anthropic.com")
         response = client.messages.create(model=selected, max_tokens=1400, temperature=0.2, messages=[{"role": "user", "content": prompt}])
         text = "\n".join(block.text for block in response.content if getattr(block, "type", "") == "text")
-        return LLMResponse("Claude", selected, text)
+        usage = getattr(response, "usage", None)
+        tokens_in = getattr(usage, "prompt_tokens", None) if usage is not None else None
+        tokens_out = getattr(usage, "completion_tokens", None) if usage is not None else None
+        tokens_total = getattr(usage, "total_tokens", None) if usage is not None else None
+        return LLMResponse("Claude", selected, text, tokens_in=tokens_in, tokens_out=tokens_out, tokens_total=tokens_total)
 
     def _gemini(self, prompt: str, model: str) -> LLMResponse:
         from google import genai
@@ -71,7 +96,10 @@ class LLMClient:
         selected = self._model(model, self.config.gemini.model or "gemini-2.5-flash")
         client = genai.Client(api_key=self.config.gemini.api_key)
         response = client.models.generate_content(model=selected, contents=prompt)
-        return LLMResponse("Gemini", selected, response.text or "")
+        tokens_in = getattr(response, "request_tokens", None) or getattr(response, "prompt_tokens", None)
+        tokens_out = getattr(response, "response_tokens", None) or getattr(response, "completion_tokens", None)
+        tokens_total = getattr(response, "total_tokens", None)
+        return LLMResponse("Gemini", selected, response.text or "", tokens_in=tokens_in, tokens_out=tokens_out, tokens_total=tokens_total)
 
     def _ollama(self, prompt: str, model: str) -> LLMResponse:
         import requests
@@ -80,7 +108,9 @@ class LLMClient:
         selected = self._model(model, self.config.ollama.model or "llama3.1")
         response = requests.post(f"{base_url}/api/generate", json={"model": selected, "prompt": prompt, "stream": False}, timeout=self._timeout())
         response.raise_for_status()
-        return LLMResponse("Ollama", selected, response.json().get("response", ""))
+        payload = response.json()
+        tokens_total = payload.get("usage", {}).get("total_tokens") if isinstance(payload.get("usage"), dict) else None
+        return LLMResponse("Ollama", selected, payload.get("response", ""), tokens_total=tokens_total)
 
     def _openrouter(self, prompt: str, model: str) -> LLMResponse:
         selected = self._model(model, self.config.openrouter.model or "openai/gpt-4o-mini")
@@ -91,7 +121,17 @@ class LLMClient:
 
         client = OpenAI(api_key=api_key or "lm-studio", base_url=base_url)
         response = client.chat.completions.create(model=model, messages=[{"role": "user", "content": prompt}], temperature=0.2)
-        return LLMResponse(provider, model, response.choices[0].message.content or "")
+        usage = getattr(response, "usage", None)
+        tokens_in = getattr(usage, "prompt_tokens", None) if usage is not None else None
+        tokens_out = getattr(usage, "completion_tokens", None) if usage is not None else None
+        tokens_total = getattr(usage, "total_tokens", None) if usage is not None else None
+        gpu = ""
+        try:
+            if provider.lower() == "lm studio":
+                gpu = self._query_lm_studio_gpu(base_url, api_key)
+        except Exception:
+            gpu = ""
+        return LLMResponse(provider, model, response.choices[0].message.content or "", tokens_in=tokens_in, tokens_out=tokens_out, tokens_total=tokens_total, gpu=gpu)
 
     def _model(self, configured: str, default: str) -> str:
         if configured and configured != self.config.local_model:
@@ -100,6 +140,30 @@ class LLMClient:
 
     def _timeout(self) -> int:
         return self.config.timeout_seconds
+
+    def _query_lm_studio_gpu(self, base_url: str, api_key: str) -> str:
+        import requests
+
+        status_url = f"{base_url.rstrip('/')}/api/status"
+        response = requests.get(status_url, headers={"Authorization": f"Bearer {api_key}"}, timeout=self._timeout())
+        response.raise_for_status()
+        payload = response.json()
+        gpu_info = payload.get("gpu", {})
+        if isinstance(gpu_info, dict):
+            name = gpu_info.get("name") or "GPU"
+            memory = gpu_info.get("memory_used")
+            memory_total = gpu_info.get("memory_total")
+            utilization = gpu_info.get("utilization")
+            parts = []
+            if memory is not None and memory_total is not None:
+                parts.append(f"{memory} / {memory_total} GB")
+            elif memory is not None:
+                parts.append(f"{memory} GB")
+            if utilization is not None:
+                parts.append(f"{utilization}%")
+            if parts:
+                return f"{name} @ {' · '.join(parts)}"
+        return ""
 
     def _local_response(self, prompt: str, warning: str = "") -> str:
         if "Return JSON only" in prompt and "suggestions" in prompt:
