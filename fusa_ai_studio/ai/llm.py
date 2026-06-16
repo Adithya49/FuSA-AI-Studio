@@ -24,6 +24,8 @@ class LLMResponse:
     tokens_total: int | None = None
     latency_seconds: float | None = None
     gpu: str = ""
+    gpu_memory_gb: float | None = None
+    gpu_utilization: int | None = None
 
 
 class LLMClient:
@@ -114,7 +116,25 @@ class LLMClient:
         response.raise_for_status()
         payload = response.json()
         tokens_total = payload.get("usage", {}).get("total_tokens") if isinstance(payload.get("usage"), dict) else None
-        return LLMResponse("Ollama", selected, payload.get("response", ""), tokens_total=tokens_total)
+        
+        # Query GPU for Ollama if available
+        gpu_str = ""
+        gpu_memory_gb = None
+        gpu_utilization = None
+        try:
+            gpu_memory_gb, gpu_utilization, gpu_str = self._query_nvidia_smi_gpu()
+        except Exception:
+            pass
+        
+        return LLMResponse(
+            "Ollama", 
+            selected, 
+            payload.get("response", ""), 
+            tokens_total=tokens_total,
+            gpu=gpu_str,
+            gpu_memory_gb=gpu_memory_gb,
+            gpu_utilization=gpu_utilization,
+        )
 
     def _openrouter(self, prompt: str, model: str) -> LLMResponse:
         selected = self._model(model, self.config.openrouter.model or "openai/gpt-4o-mini")
@@ -129,15 +149,36 @@ class LLMClient:
         tokens_in = getattr(usage, "prompt_tokens", None) if usage is not None else None
         tokens_out = getattr(usage, "completion_tokens", None) if usage is not None else None
         tokens_total = getattr(usage, "total_tokens", None) if usage is not None else None
-        gpu = ""
-        try:
-            if provider.lower() == "lm studio":
-                gpu = self._query_lm_studio_gpu(base_url, api_key)
-        except Exception as e:
-            # Don't log full stack trace for frequently-failing GPU queries; debug is sufficient
-            logger.debug("Failed to query LM Studio GPU status: %s", e)
-            gpu = ""
-        return LLMResponse(provider, model, response.choices[0].message.content or "", tokens_in=tokens_in, tokens_out=tokens_out, tokens_total=tokens_total, gpu=gpu)
+        
+        gpu_str = ""
+        gpu_memory_gb = None
+        gpu_utilization = None
+        
+        # Try LM Studio API first if applicable
+        if provider.lower() == "lm studio":
+            try:
+                gpu_str, gpu_memory_gb, gpu_utilization = self._query_lm_studio_gpu(base_url, api_key)
+            except Exception as e:
+                logger.debug("Failed to query LM Studio GPU status: %s", e)
+        
+        # Fallback to nvidia-smi if no GPU info
+        if not gpu_str:
+            try:
+                gpu_memory_gb, gpu_utilization, gpu_str = self._query_nvidia_smi_gpu()
+            except Exception as e:
+                logger.debug("Failed to query nvidia-smi: %s", e)
+        
+        return LLMResponse(
+            provider, 
+            model, 
+            response.choices[0].message.content or "", 
+            tokens_in=tokens_in, 
+            tokens_out=tokens_out, 
+            tokens_total=tokens_total, 
+            gpu=gpu_str,
+            gpu_memory_gb=gpu_memory_gb,
+            gpu_utilization=gpu_utilization,
+        )
 
     def _model(self, configured: str, default: str) -> str:
         if configured and configured != self.config.local_model:
@@ -147,29 +188,74 @@ class LLMClient:
     def _timeout(self) -> int:
         return self.config.timeout_seconds
 
-    def _query_lm_studio_gpu(self, base_url: str, api_key: str) -> str:
+    def _query_nvidia_smi_gpu(self) -> tuple[float | None, int | None, str]:
+        """Query nvidia-smi for GPU memory and utilization.
+        
+        Returns: (memory_gb, utilization_percent, status_string)
+        """
+        import subprocess
+        
+        try:
+            # Query: GPU memory used (MB), GPU memory total (MB), GPU utilization (%)
+            cmd = [
+                "nvidia-smi",
+                "--query-gpu=memory.used,memory.total,utilization.gpu",
+                "--format=csv,nounits,noheader",
+            ]
+            output = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            if output.returncode == 0:
+                line = output.stdout.strip().split("\n")[0]
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 3:
+                    try:
+                        memory_used_mb = float(parts[0])
+                        memory_total_mb = float(parts[1])
+                        utilization = int(float(parts[2]))
+                        memory_gb = memory_used_mb / 1024.0
+                        return memory_gb, utilization, f"{memory_gb:.1f} GB @ {utilization}%"
+                    except (ValueError, IndexError):
+                        pass
+        except Exception:
+            pass
+        return None, None, ""
+
+    def _query_lm_studio_gpu(self, base_url: str, api_key: str) -> tuple[str, float | None, int | None]:
+        """Query LM Studio API for GPU metrics.
+        
+        Returns: (status_string, memory_gb, utilization_percent)
+        """
         import requests
 
-        status_url = f"{base_url.rstrip('/')}/api/status"
-        response = requests.get(status_url, headers={"Authorization": f"Bearer {api_key}"}, timeout=self._timeout())
-        response.raise_for_status()
-        payload = response.json()
-        gpu_info = payload.get("gpu", {})
-        if isinstance(gpu_info, dict):
-            name = gpu_info.get("name") or "GPU"
-            memory = gpu_info.get("memory_used")
-            memory_total = gpu_info.get("memory_total")
-            utilization = gpu_info.get("utilization")
-            parts = []
-            if memory is not None and memory_total is not None:
-                parts.append(f"{memory} / {memory_total} GB")
-            elif memory is not None:
-                parts.append(f"{memory} GB")
-            if utilization is not None:
-                parts.append(f"{utilization}%")
-            if parts:
-                return f"{name} @ {' · '.join(parts)}"
-        return ""
+        try:
+            status_url = f"{base_url.rstrip('/')}/api/status"
+            response = requests.get(status_url, headers={"Authorization": f"Bearer {api_key}"}, timeout=self._timeout())
+            response.raise_for_status()
+            payload = response.json()
+            gpu_info = payload.get("gpu", {})
+            if isinstance(gpu_info, dict):
+                name = gpu_info.get("name") or "GPU"
+                memory = gpu_info.get("memory_used")
+                memory_total = gpu_info.get("memory_total")
+                utilization = gpu_info.get("utilization")
+                parts = []
+                memory_gb = None
+                util_pct = None
+                if memory is not None and memory_total is not None:
+                    memory_gb = float(memory) if isinstance(memory, (int, float)) else None
+                    parts.append(f"{memory} / {memory_total} GB")
+                    util_pct = int(utilization) if utilization is not None and isinstance(utilization, (int, float)) else None
+                elif memory is not None:
+                    memory_gb = float(memory) if isinstance(memory, (int, float)) else None
+                    parts.append(f"{memory} GB")
+                if utilization is not None:
+                    util_pct = int(utilization)
+                    parts.append(f"{utilization}%")
+                if parts:
+                    return f"{name} @ {' · '.join(parts)}", memory_gb, util_pct
+        except Exception:
+            pass
+        return "", None, None
+
 
     def _local_response(self, prompt: str, warning: str = "") -> str:
         if "Return JSON only" in prompt and "suggestions" in prompt:

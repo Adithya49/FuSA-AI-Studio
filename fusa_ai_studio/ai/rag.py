@@ -16,6 +16,13 @@ class RAGAnswer:
     provider: str
     model: str
     warning: str = ""
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    tokens_total: int | None = None
+    latency_seconds: float | None = None
+    gpu: str = ""
+    gpu_memory_gb: float | None = None
+    gpu_utilization: int | None = None
 
 
 class RAGEngine:
@@ -45,10 +52,25 @@ class RAGEngine:
             "tokens_total": getattr(response, "tokens_total", None),
             "latency_seconds": getattr(response, "latency_seconds", None),
             "gpu": getattr(response, "gpu", None),
+            "gpu_memory_gb": getattr(response, "gpu_memory_gb", None),
+            "gpu_utilization": getattr(response, "gpu_utilization", None),
         }
         self.repo.store_ai_interaction(project_id, feature, response.provider, response.model, question, sources, response.text, metadata=metadata)
         self.repo.add_memory(project_id, "ai_interaction", f"{feature}: {question[:160]}", 2)
-        return RAGAnswer(response.text, sources, response.provider, response.model, response.warning)
+        return RAGAnswer(
+            response.text,
+            sources,
+            response.provider,
+            response.model,
+            response.warning,
+            tokens_in=response.tokens_in,
+            tokens_out=response.tokens_out,
+            tokens_total=response.tokens_total,
+            latency_seconds=response.latency_seconds,
+            gpu=response.gpu,
+            gpu_memory_gb=response.gpu_memory_gb,
+            gpu_utilization=response.gpu_utilization,
+        )
 
     def _trace_summary(self, project_id: str) -> str:
         links = self.repo.list_table("trace_links", project_id)

@@ -207,6 +207,8 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
             "tokens_total": getattr(answer, "tokens_total", None),
             "latency_seconds": getattr(answer, "latency_seconds", None),
             "gpu": getattr(answer, "gpu", None),
+            "gpu_memory_gb": getattr(answer, "gpu_memory_gb", None),
+            "gpu_utilization": getattr(answer, "gpu_utilization", None),
         }
         services.repo.store_ai_interaction(
             project_id,
@@ -249,6 +251,8 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
             "tokens_total": getattr(answer, "tokens_total", None),
             "latency_seconds": getattr(answer, "latency_seconds", None),
             "gpu": getattr(answer, "gpu", None),
+            "gpu_memory_gb": getattr(answer, "gpu_memory_gb", None),
+            "gpu_utilization": getattr(answer, "gpu_utilization", None),
         }
         services.repo.store_ai_interaction(
             project_id,
@@ -289,6 +293,8 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
             "tokens_total": getattr(answer, "tokens_total", None),
             "latency_seconds": getattr(answer, "latency_seconds", None),
             "gpu": getattr(answer, "gpu", None),
+            "gpu_memory_gb": getattr(answer, "gpu_memory_gb", None),
+            "gpu_utilization": getattr(answer, "gpu_utilization", None),
         }
         services.repo.store_ai_interaction(
             project_id,
@@ -329,6 +335,8 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
             "tokens_total": getattr(answer, "tokens_total", None),
             "latency_seconds": getattr(answer, "latency_seconds", None),
             "gpu": getattr(answer, "gpu", None),
+            "gpu_memory_gb": getattr(answer, "gpu_memory_gb", None),
+            "gpu_utilization": getattr(answer, "gpu_utilization", None),
         }
         services.repo.store_ai_interaction(
             project_id,
@@ -369,6 +377,8 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
             "tokens_total": getattr(answer, "tokens_total", None),
             "latency_seconds": getattr(answer, "latency_seconds", None),
             "gpu": getattr(answer, "gpu", None),
+            "gpu_memory_gb": getattr(answer, "gpu_memory_gb", None),
+            "gpu_utilization": getattr(answer, "gpu_utilization", None),
         }
         services.repo.store_ai_interaction(
             project_id,
@@ -400,6 +410,8 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
         "tokens_total": getattr(answer, "tokens_total", None),
         "latency_seconds": getattr(answer, "latency_seconds", None),
         "gpu": getattr(answer, "gpu", None),
+        "gpu_memory_gb": getattr(answer, "gpu_memory_gb", None),
+        "gpu_utilization": getattr(answer, "gpu_utilization", None),
     }
     services.repo.store_ai_interaction(
         project_id,
@@ -475,20 +487,37 @@ def render_ai_response_with_chat(services, project_id: str, feature: str, answer
     st.markdown(st.session_state[draft_key])
     try:
         caption_items = [f"Provider: {answer.provider}", f"Model: {answer.model}"]
-        if getattr(answer, "tokens_in", None) is not None or getattr(answer, "tokens_out", None) is not None or getattr(answer, "tokens_total", None) is not None:
-            tokens_in = getattr(answer, "tokens_in", None) or 0
-            tokens_out = getattr(answer, "tokens_out", None) or 0
-            tokens_total = getattr(answer, "tokens_total", None) or tokens_in + tokens_out
+        
+        # Add token metrics
+        if answer.tokens_in is not None or answer.tokens_out is not None or answer.tokens_total is not None:
+            tokens_in = answer.tokens_in or 0
+            tokens_out = answer.tokens_out or 0
+            tokens_total = answer.tokens_total or (tokens_in + tokens_out)
             caption_items.append(f"Tokens (In/Out/Total): {tokens_in:,} / {tokens_out:,} / {tokens_total:,}")
-        if getattr(answer, "latency_seconds", None) is not None:
+        
+        # Add latency
+        if answer.latency_seconds is not None:
             caption_items.append(f"Latency: {answer.latency_seconds:.2f}s")
-        if getattr(answer, "gpu", ""):
+        
+        # Add GPU info - show either full string or parsed components
+        if answer.gpu:
             caption_items.append(f"GPU: {answer.gpu}")
+        elif answer.gpu_memory_gb is not None or answer.gpu_utilization is not None:
+            gpu_str = ""
+            if answer.gpu_memory_gb is not None:
+                gpu_str += f"{answer.gpu_memory_gb:.1f} GB"
+            if answer.gpu_utilization is not None:
+                if gpu_str:
+                    gpu_str += f" @ {answer.gpu_utilization}%"
+                else:
+                    gpu_str = f"{answer.gpu_utilization}%"
+            if gpu_str:
+                caption_items.append(f"GPU: {gpu_str}")
     except Exception as exc:
         _log_exception("Error formatting AI response caption", exc)
         caption_items = [
-            f"Provider: {getattr(answer, 'provider', 'unknown')}",
-            f"Model: {getattr(answer, 'model', 'unknown')}"
+            f"Provider: {answer.provider}",
+            f"Model: {answer.model}"
         ]
     st.caption(" • ".join(caption_items))
     source_list(answer.sources)
