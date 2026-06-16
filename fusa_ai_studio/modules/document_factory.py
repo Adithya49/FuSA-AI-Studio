@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import json
 from pathlib import Path
 
 import streamlit as st
@@ -9,6 +11,119 @@ from fusa_ai_studio.database.repository import now_iso
 from fusa_ai_studio.ui.components import data_table
 from fusa_ai_studio.ui.genai import render_ai_response_with_chat, run_genai_action
 from fusa_ai_studio.ui.workproduct_inputs import render_workproduct_inputs
+
+
+def _try_parse_object(text: str):
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, SyntaxError):
+        return None
+
+
+def _render_object_table(doc, obj) -> bool:
+    if isinstance(obj, dict):
+        table = doc.add_table(rows=1, cols=2)
+        table.style = "Table Grid"
+        header_cells = table.rows[0].cells
+        header_cells[0].text = "Field"
+        header_cells[1].text = "Value"
+        for key, value in obj.items():
+            row_cells = table.add_row().cells
+            row_cells[0].text = str(key)
+            row_cells[1].text = str(value)
+        return True
+
+    if isinstance(obj, list) and obj and all(isinstance(item, dict) for item in obj):
+        keys = sorted({key for item in obj for key in item.keys()})
+        if not keys:
+            return False
+        table = doc.add_table(rows=1, cols=len(keys))
+        table.style = "Table Grid"
+        header_cells = table.rows[0].cells
+        for index, key in enumerate(keys):
+            header_cells[index].text = str(key)
+        for item in obj:
+            row_cells = table.add_row().cells
+            for index, key in enumerate(keys):
+                row_cells[index].text = str(item.get(key, ""))
+        return True
+
+    return False
+
+
+def _write_docx(path: Path, title: str, content: str) -> None:
+    from docx import Document
+
+    doc = Document()
+    doc.add_heading(title, level=1)
+    lines = content.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith("### "):
+            doc.add_heading(line[4:], level=3)
+            index += 1
+            continue
+        if line.startswith("## "):
+            doc.add_heading(line[3:], level=2)
+            index += 1
+            continue
+        if line.startswith("# "):
+            doc.add_heading(line[2:], level=1)
+            index += 1
+            continue
+
+        if line.startswith("- "):
+            remainder = line[2:].strip()
+            parsed = _try_parse_object(remainder)
+            if parsed is not None:
+                table_rows = [parsed] if isinstance(parsed, dict) else parsed
+                next_index = index + 1
+                while next_index < len(lines) and lines[next_index].startswith("- "):
+                    next_parsed = _try_parse_object(lines[next_index][2:].strip())
+                    if isinstance(next_parsed, dict) and isinstance(parsed, dict):
+                        table_rows.append(next_parsed)
+                        next_index += 1
+                        continue
+                    break
+                if isinstance(parsed, dict):
+                    if _render_object_table(doc, table_rows):
+                        index = next_index
+                        continue
+                if _render_object_table(doc, parsed):
+                    index += 1
+                    continue
+            doc.add_paragraph(line[2:], style="List Bullet")
+            index += 1
+            continue
+
+        if line.strip().startswith("{") or line.strip().startswith("["):
+            block_lines = []
+            next_index = index
+            while next_index < len(lines) and lines[next_index].strip() and not lines[next_index].startswith("# ") and not lines[next_index].startswith("- "):
+                block_lines.append(lines[next_index])
+                next_index += 1
+            parsed = _try_parse_object("\n".join(block_lines))
+            if parsed is not None and _render_object_table(doc, parsed):
+                index = next_index
+                continue
+
+        parsed = _try_parse_object(line)
+        if parsed is not None and _render_object_table(doc, parsed):
+            index += 1
+            continue
+
+        if line.strip():
+            doc.add_paragraph(line)
+        index += 1
+    doc.save(path)
 
 
 def _artifact_summary(services: Services, project_id: str) -> str:
