@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
+import traceback
+from pathlib import Path
 from datetime import date
 import json
 from typing import TypeVar
@@ -9,6 +12,26 @@ import streamlit as st
 
 from fusa_ai_studio.ui.components import source_list
 import hashlib
+
+
+LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    handler = logging.FileHandler(LOG_DIR / "genai.log", encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logger.addHandler(handler)
+logger.setLevel(logging.DEBUG)
+
+
+def _log_exception(message: str, exc: BaseException) -> None:
+    logger.exception(message)
+    try:
+        (LOG_DIR / "genai_last_error.log").write_text(
+            f"{message}\n\n{traceback.format_exc()}", encoding="utf-8"
+        )
+    except Exception:
+        logger.exception("Failed to write last error log")
 
 
 T = TypeVar("T")
@@ -361,6 +384,7 @@ def run_genai_action(label: str, action: Callable[[], T]) -> T:
         except Exception as exc:
             status.update(label=f"{label}: error", state="error")
             status.write(f"Error: {exc}")
+            _log_exception(f"GenAI action failed for {label}", exc)
             raise
 
         warning = getattr(result, "warning", "") or ""
@@ -409,16 +433,23 @@ def render_ai_response_with_chat(services, project_id: str, feature: str, answer
     st.session_state.setdefault(draft_key, answer_text)
 
     st.markdown(st.session_state[draft_key])
-    caption_items = [f"Provider: {answer.provider}", f"Model: {answer.model}"]
-    if getattr(answer, "tokens_in", None) is not None or getattr(answer, "tokens_out", None) is not None or getattr(answer, "tokens_total", None) is not None:
-        tokens_in = getattr(answer, "tokens_in", None) or 0
-        tokens_out = getattr(answer, "tokens_out", None) or 0
-        tokens_total = getattr(answer, "tokens_total", None) or tokens_in + tokens_out
-        caption_items.append(f"Tokens (In/Out/Total): {tokens_in:,} / {tokens_out:,} / {tokens_total:,}")
-    if getattr(answer, "latency_seconds", None) is not None:
-        caption_items.append(f"Latency: {answer.latency_seconds:.2f}s")
-    if getattr(answer, "gpu", ""):
-        caption_items.append(f"GPU: {answer.gpu}")
+    try:
+        caption_items = [f"Provider: {answer.provider}", f"Model: {answer.model}"]
+        if getattr(answer, "tokens_in", None) is not None or getattr(answer, "tokens_out", None) is not None or getattr(answer, "tokens_total", None) is not None:
+            tokens_in = getattr(answer, "tokens_in", None) or 0
+            tokens_out = getattr(answer, "tokens_out", None) or 0
+            tokens_total = getattr(answer, "tokens_total", None) or tokens_in + tokens_out
+            caption_items.append(f"Tokens (In/Out/Total): {tokens_in:,} / {tokens_out:,} / {tokens_total:,}")
+        if getattr(answer, "latency_seconds", None) is not None:
+            caption_items.append(f"Latency: {answer.latency_seconds:.2f}s")
+        if getattr(answer, "gpu", ""):
+            caption_items.append(f"GPU: {answer.gpu}")
+    except Exception as exc:
+        _log_exception("Error formatting AI response caption", exc)
+        caption_items = [
+            f"Provider: {getattr(answer, 'provider', 'unknown')}",
+            f"Model: {getattr(answer, 'model', 'unknown')}"
+        ]
     st.caption(" • ".join(caption_items))
     source_list(answer.sources)
     # Chat UI removed — users interact with the displayed draft directly.
