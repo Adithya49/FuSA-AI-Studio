@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+import io
 
 import streamlit as st
+from docx import Document
+from PyPDF2 import PdfReader
 
 from fusa_ai_studio.core.services import Services
 
@@ -110,13 +113,50 @@ Every ASIL-rated hazardous event needs at least one safety goal. Every safety go
 }
 
 
+def extract_text_from_file(uploaded_file) -> str:
+    """Extract text from uploaded file based on file type."""
+    file_extension = uploaded_file.name.lower().split('.')[-1]
+    
+    if file_extension == 'pdf':
+        return extract_text_from_pdf(uploaded_file)
+    elif file_extension == 'docx':
+        return extract_text_from_docx(uploaded_file)
+    else:
+        # For text files (txt, md, csv, log)
+        return uploaded_file.read().decode("utf-8", errors="replace")
+
+
+def extract_text_from_pdf(uploaded_file) -> str:
+    """Extract text from PDF file."""
+    try:
+        pdf_reader = PdfReader(io.BytesIO(uploaded_file.getbuffer()))
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+        return text
+    except Exception as e:
+        return f"Error extracting PDF: {str(e)}"
+
+
+def extract_text_from_docx(uploaded_file) -> str:
+    """Extract text from DOCX file."""
+    try:
+        doc = Document(io.BytesIO(uploaded_file.getbuffer()))
+        text = ""
+        for paragraph in doc.paragraphs:
+            text += paragraph.text + "\n"
+        return text
+    except Exception as e:
+        return f"Error extracting DOCX: {str(e)}"
+
+
 def render_workproduct_inputs(services: Services, project_id: str, workproduct: str) -> None:
     repo = services.repo
     with st.expander(f"Inputs for {workproduct}", expanded=False):
         st.caption("Upload or paste source material for this work product. It is saved to the project knowledge base, chunked, embedded, and used by RAG.")
         uploaded = st.file_uploader(
             "Upload source data",
-            type=["txt", "md", "csv", "log"],
+            type=["txt", "md", "csv", "log", "pdf", "docx"],
             key=f"{workproduct}_upload",
         )
         title = st.text_input("Input title", f"{workproduct} input pack", key=f"{workproduct}_title")
@@ -128,7 +168,7 @@ def render_workproduct_inputs(services: Services, project_id: str, workproduct: 
             st.success("Input saved and indexed.")
         if cols[1].button("Upload and index", key=f"{workproduct}_save_upload", disabled=uploaded is None):
             if uploaded is not None:
-                content = uploaded.read().decode("utf-8", errors="replace")
+                content = extract_text_from_file(uploaded)
                 services.knowledge.add_document(project_id, title or uploaded.name, uploaded.name, content, workproduct)
                 repo.add_memory(project_id, "workproduct_input", f"Uploaded {uploaded.name} for {workproduct}.", 3)
                 st.success("Upload saved and indexed.")
