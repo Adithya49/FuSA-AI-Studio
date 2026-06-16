@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-import logging
-import traceback
 from pathlib import Path
 from datetime import date
 import json
@@ -11,23 +9,17 @@ from typing import TypeVar
 import streamlit as st
 
 from fusa_ai_studio.ui.components import source_list
+from fusa_ai_studio import logging_config
+import traceback
 import hashlib
 
-
-LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-logger = logging.getLogger(__name__)
-if not logger.handlers:
-    handler = logging.FileHandler(LOG_DIR / "genai.log", encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
-    logger.addHandler(handler)
-logger.setLevel(logging.DEBUG)
+logger = logging_config.get_logger(__name__)
 
 
 def _log_exception(message: str, exc: BaseException) -> None:
     logger.exception(message)
     try:
-        (LOG_DIR / "genai_last_error.log").write_text(
+        (logging_config.ERROR_DIR / "genai_last_error.log").write_text(
             f"{message}\n\n{traceback.format_exc()}", encoding="utf-8"
         )
     except Exception:
@@ -209,6 +201,13 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
         )
         services.repo.add_memory(project_id, "item_definition", f"Item {title or item_id}: {summary or hint}", 3)
         services.knowledge.index_artifacts(project_id)
+        metadata = {
+            "tokens_in": getattr(answer, "tokens_in", None),
+            "tokens_out": getattr(answer, "tokens_out", None),
+            "tokens_total": getattr(answer, "tokens_total", None),
+            "latency_seconds": getattr(answer, "latency_seconds", None),
+            "gpu": getattr(answer, "gpu", None),
+        }
         services.repo.store_ai_interaction(
             project_id,
             f"{feature} quick-add",
@@ -217,6 +216,7 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
             title or "Add item definition",
             [{"id": "suggestion", "content": json.dumps(suggestion)}],
             f"Added item {item_id}",
+            metadata=metadata,
         )
         return "item", str(item_id)
 
@@ -243,6 +243,13 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
             services.repo.add_trace(project_id, "item", str(item_id), "hazard", str(hazard_id), "analyzed_by", "Added from quick suggestion.")
         services.repo.add_memory(project_id, "hara", f"{summary or hint} classified D.", 4)
         services.knowledge.index_artifacts(project_id)
+        metadata = {
+            "tokens_in": getattr(answer, "tokens_in", None),
+            "tokens_out": getattr(answer, "tokens_out", None),
+            "tokens_total": getattr(answer, "tokens_total", None),
+            "latency_seconds": getattr(answer, "latency_seconds", None),
+            "gpu": getattr(answer, "gpu", None),
+        }
         services.repo.store_ai_interaction(
             project_id,
             f"{feature} quick-add",
@@ -251,6 +258,7 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
             title or "Add hazard",
             [{"id": "suggestion", "content": json.dumps(suggestion)}],
             f"Added hazard {hazard_id}",
+            metadata=metadata,
         )
         return "hazard", str(hazard_id)
 
@@ -275,6 +283,13 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
             services.repo.add_trace(project_id, "hazard", str(hazard_id), "safety_goal", str(sg_id), "mitigated_by", "Added from quick suggestion.")
         services.repo.add_memory(project_id, "safety_goal", f"{goal_code}: {summary or hint}", 4)
         services.knowledge.index_artifacts(project_id)
+        metadata = {
+            "tokens_in": getattr(answer, "tokens_in", None),
+            "tokens_out": getattr(answer, "tokens_out", None),
+            "tokens_total": getattr(answer, "tokens_total", None),
+            "latency_seconds": getattr(answer, "latency_seconds", None),
+            "gpu": getattr(answer, "gpu", None),
+        }
         services.repo.store_ai_interaction(
             project_id,
             f"{feature} quick-add",
@@ -283,6 +298,7 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
             title or "Add safety goal",
             [{"id": "suggestion", "content": json.dumps(suggestion)}],
             f"Added safety goal {sg_id}",
+            metadata=metadata,
         )
         return "safety_goal", str(sg_id)
 
@@ -307,6 +323,13 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
             services.repo.add_trace(project_id, "safety_goal", str(goal_id), "fsc_requirement", str(req_id), "refined_by", "Added from quick suggestion.")
         services.repo.add_memory(project_id, "fsc", f"{req_code}: {summary or hint}", 3)
         services.knowledge.index_artifacts(project_id)
+        metadata = {
+            "tokens_in": getattr(answer, "tokens_in", None),
+            "tokens_out": getattr(answer, "tokens_out", None),
+            "tokens_total": getattr(answer, "tokens_total", None),
+            "latency_seconds": getattr(answer, "latency_seconds", None),
+            "gpu": getattr(answer, "gpu", None),
+        }
         services.repo.store_ai_interaction(
             project_id,
             f"{feature} quick-add",
@@ -315,6 +338,7 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
             title or "Add FSC requirement",
             [{"id": "suggestion", "content": json.dumps(suggestion)}],
             f"Added FSC requirement {req_id}",
+            metadata=metadata,
         )
         return "fsc_requirement", str(req_id)
 
@@ -339,6 +363,13 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
             services.repo.add_trace(project_id, "fsc_requirement", str(fsc_id), "tsc_requirement", str(req_id), "refined_by", "Added from quick suggestion.")
         services.repo.add_memory(project_id, "tsc", f"{req_code}: {summary or hint}", 3)
         services.knowledge.index_artifacts(project_id)
+        metadata = {
+            "tokens_in": getattr(answer, "tokens_in", None),
+            "tokens_out": getattr(answer, "tokens_out", None),
+            "tokens_total": getattr(answer, "tokens_total", None),
+            "latency_seconds": getattr(answer, "latency_seconds", None),
+            "gpu": getattr(answer, "gpu", None),
+        }
         services.repo.store_ai_interaction(
             project_id,
             f"{feature} quick-add",
@@ -347,6 +378,7 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
             title or "Add TSC requirement",
             [{"id": "suggestion", "content": json.dumps(suggestion)}],
             f"Added TSC requirement {req_id}",
+            metadata=metadata,
         )
         return "tsc_requirement", str(req_id)
 
@@ -362,6 +394,13 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
         },
     )
     services.repo.add_memory(project_id, "workflow", f"{title or 'Follow-up task'} added from quick suggestion.", 2)
+    metadata = {
+        "tokens_in": getattr(answer, "tokens_in", None),
+        "tokens_out": getattr(answer, "tokens_out", None),
+        "tokens_total": getattr(answer, "tokens_total", None),
+        "latency_seconds": getattr(answer, "latency_seconds", None),
+        "gpu": getattr(answer, "gpu", None),
+    }
     services.repo.store_ai_interaction(
         project_id,
         f"{feature} quick-add",
@@ -370,6 +409,7 @@ def _direct_quick_add(services, project_id: str, feature: str, answer, suggestio
         title or "Add follow-up task",
         [{"id": "suggestion", "content": json.dumps(suggestion)}],
         f"Added task {task_id}",
+        metadata=metadata,
     )
     return "workflow_task", str(task_id)
 

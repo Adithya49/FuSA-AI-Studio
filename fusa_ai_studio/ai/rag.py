@@ -39,7 +39,14 @@ class RAGEngine:
         trace_context = self._trace_summary(project_id)
         prompt = build_rag_prompt(feature, question, memory, trace_context, sources)
         response = self.llm.generate(prompt, provider, model)
-        self.repo.store_ai_interaction(project_id, feature, response.provider, response.model, question, sources, response.text)
+        metadata = {
+            "tokens_in": getattr(response, "tokens_in", None),
+            "tokens_out": getattr(response, "tokens_out", None),
+            "tokens_total": getattr(response, "tokens_total", None),
+            "latency_seconds": getattr(response, "latency_seconds", None),
+            "gpu": getattr(response, "gpu", None),
+        }
+        self.repo.store_ai_interaction(project_id, feature, response.provider, response.model, question, sources, response.text, metadata=metadata)
         self.repo.add_memory(project_id, "ai_interaction", f"{feature}: {question[:160]}", 2)
         return RAGAnswer(response.text, sources, response.provider, response.model, response.warning)
 

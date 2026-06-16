@@ -5,6 +5,9 @@ import time
 from dataclasses import dataclass, replace
 
 from fusa_ai_studio.core.config import LLMConfig
+from fusa_ai_studio import logging_config
+
+logger = logging_config.get_logger(__name__)
 
 
 LOCAL_MODEL_NAME = "fusa-local-deterministic"
@@ -55,6 +58,7 @@ class LLMClient:
                 result = LLMResponse("Local", selected, self._local_response(prompt))
         except Exception as exc:
             latency = time.perf_counter() - start
+            logger.exception("LLM generate failed")
             return replace(
                 LLMResponse(provider, model, self._local_response(prompt, f"Provider call failed: {exc}"), warning=str(exc)),
                 latency_seconds=latency,
@@ -130,6 +134,7 @@ class LLMClient:
             if provider.lower() == "lm studio":
                 gpu = self._query_lm_studio_gpu(base_url, api_key)
         except Exception:
+            logger.exception("Failed to query LM Studio GPU status")
             gpu = ""
         return LLMResponse(provider, model, response.choices[0].message.content or "", tokens_in=tokens_in, tokens_out=tokens_out, tokens_total=tokens_total, gpu=gpu)
 

@@ -172,7 +172,29 @@ class Repository:
                 )
             )
 
-    def store_ai_interaction(self, project_id: str, feature: str, provider: str, model: str, question: str, retrieved_context: list[dict], response: str) -> int:
+    def store_ai_interaction(self, project_id: str, feature: str, provider: str, model: str, question: str, retrieved_context: list[dict], response: str, metadata: dict | None = None) -> int:
+        # Write a sidecar metadata file for auditing into the project's Error folder
+        try:
+            from fusa_ai_studio import logging_config
+
+            ai_dir = logging_config.ERROR_DIR / "ai_interactions"
+            ai_dir.mkdir(parents=True, exist_ok=True)
+            safe_name = f"ai_{project_id}_{int(datetime.utcnow().timestamp())}.json"
+            payload = {
+                "project_id": project_id,
+                "feature": feature,
+                "provider": provider,
+                "model": model,
+                "question": question,
+                "retrieved_context": retrieved_context,
+                "response": response,
+                "metadata": metadata or {},
+            }
+            (ai_dir / safe_name).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception:
+            # avoid raising on logging failure
+            pass
+
         return self.insert(
             "ai_interactions",
             {
