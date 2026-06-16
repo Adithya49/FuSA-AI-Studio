@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import sys
 import traceback
 from pathlib import Path
@@ -19,9 +20,11 @@ def _write_unhandled(exc_type, exc, tb):
         pass
 
 
+
 root_logger = logging.getLogger()
 if not root_logger.handlers:
-    fh = logging.FileHandler(ERROR_DIR / "app.log", encoding="utf-8")
+    # rotating file to avoid unbounded growth
+    fh = logging.handlers.RotatingFileHandler(ERROR_DIR / "app.log", encoding="utf-8", maxBytes=5 * 1024 * 1024, backupCount=3)
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
     root_logger.addHandler(fh)
     # also keep console handler
@@ -29,7 +32,8 @@ if not root_logger.handlers:
     ch.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
     root_logger.addHandler(ch)
 
-root_logger.setLevel(logging.DEBUG)
+    # avoid very noisy debug logs by default
+    root_logger.setLevel(logging.INFO)
 
 # Capture unhandled exceptions
 sys.excepthook = _write_unhandled

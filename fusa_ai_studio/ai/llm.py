@@ -133,8 +133,9 @@ class LLMClient:
         try:
             if provider.lower() == "lm studio":
                 gpu = self._query_lm_studio_gpu(base_url, api_key)
-        except Exception:
-            logger.exception("Failed to query LM Studio GPU status")
+        except Exception as e:
+            # Don't log full stack trace for frequently-failing GPU queries; debug is sufficient
+            logger.debug("Failed to query LM Studio GPU status: %s", e)
             gpu = ""
         return LLMResponse(provider, model, response.choices[0].message.content or "", tokens_in=tokens_in, tokens_out=tokens_out, tokens_total=tokens_total, gpu=gpu)
 
