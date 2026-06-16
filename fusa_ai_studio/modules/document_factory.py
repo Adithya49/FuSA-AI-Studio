@@ -125,10 +125,8 @@ def _write_docx(path: Path, title: str, content: str) -> None:
         index += 1
     doc.save(path)
 
-
 def _artifact_summary(services: Services, project_id: str) -> str:
     repo = services.repo
-    lines: list[str] = []
 
     sections = [
         ("items", "Items"),
@@ -137,6 +135,8 @@ def _artifact_summary(services: Services, project_id: str) -> str:
         ("fsc_requirements", "FSC Requirements"),
         ("tsc_requirements", "TSC Requirements"),
     ]
+
+    lines = []
 
     for table_name, title in sections:
         rows = repo.list_table(table_name, project_id)
@@ -151,18 +151,21 @@ def _artifact_summary(services: Services, project_id: str) -> str:
         for idx, row in enumerate(rows, start=1):
             lines.append(f"### Record {idx}")
 
+            clean_row = {}
+
             for key, value in row.items():
                 if value is None:
-                    value = ""
+                    clean_row[key] = ""
+                elif isinstance(value, (dict, list)):
+                    clean_row[key] = json.dumps(value, indent=2)
+                else:
+                    clean_row[key] = str(value)
 
-                if isinstance(value, (dict, list)):
-                    value = json.dumps(value, indent=2)
-
-                lines.append(f"- {json.dumps({key: value})}")
-
+            lines.append(json.dumps(clean_row))
             lines.append("")
 
     return "\n".join(lines)
+
 
 def _trace_summary(services: Services, project_id: str) -> str:
     links = services.repo.list_table("trace_links", project_id)
@@ -177,90 +180,57 @@ def _write_docx(path: Path, title: str, content: str) -> None:
     doc.add_heading(title, level=1)
 
     lines = content.splitlines()
-    i = 0
 
-    while i < len(lines):
-        line = lines[i].strip()
+    for line in lines:
+        line = line.strip()
 
         if not line:
-            i += 1
             continue
 
         # Headings
         if line.startswith("### "):
             doc.add_heading(line[4:], level=3)
-            i += 1
             continue
 
         if line.startswith("## "):
             doc.add_heading(line[3:], level=2)
-            i += 1
             continue
 
         if line.startswith("# "):
             doc.add_heading(line[2:], level=1)
-            i += 1
             continue
 
-        # Bullet items that contain JSON
-        if line.startswith("- "):
-            json_text = line[2:].strip()
-
+        # JSON record -> single table
+        if line.startswith("{") and line.endswith("}"):
             try:
-                data = json.loads(json_text)
+                data = json.loads(line)
 
                 if isinstance(data, dict):
                     table = doc.add_table(rows=1, cols=2)
                     table.style = "Table Grid"
 
-                    hdr = table.rows[0].cells
-                    hdr[0].text = "Field"
-                    hdr[1].text = "Value"
+                    header = table.rows[0].cells
+                    header[0].text = "Field"
+                    header[1].text = "Value"
 
                     for key, value in data.items():
                         row = table.add_row().cells
                         row[0].text = str(key)
+
+                        if value is None:
+                            value = ""
+
                         row[1].text = str(value)
 
                     doc.add_paragraph()
 
-                else:
-                    doc.add_paragraph(str(data))
+                    continue
 
             except Exception:
-                doc.add_paragraph(line[2:], style="List Bullet")
+                pass
 
-            i += 1
-            continue
-
-        # Raw JSON object blocks
-        if line.startswith("{") and line.endswith("}"):
-            try:
-                data = json.loads(line)
-
-                table = doc.add_table(rows=1, cols=2)
-                table.style = "Table Grid"
-
-                hdr = table.rows[0].cells
-                hdr[0].text = "Field"
-                hdr[1].text = "Value"
-
-                for key, value in data.items():
-                    row = table.add_row().cells
-                    row[0].text = str(key)
-                    row[1].text = str(value)
-
-                doc.add_paragraph()
-
-            except Exception:
-                doc.add_paragraph(line)
-
-            i += 1
-            continue
-
-        # Normal text
+        # Normal paragraph
         doc.add_paragraph(line)
-        i += 1
 
     doc.save(path)
 
