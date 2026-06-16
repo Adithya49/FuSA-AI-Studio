@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, replace
 
@@ -118,11 +119,11 @@ class LLMClient:
         tokens_total = payload.get("usage", {}).get("total_tokens") if isinstance(payload.get("usage"), dict) else None
         
         # Query GPU for Ollama if available
-        gpu_str = ""
         gpu_memory_gb = None
         gpu_utilization = None
+        gpu_str = ""
         try:
-            gpu_memory_gb, gpu_utilization, gpu_str = self._query_nvidia_smi_gpu()
+            gpu_memory_gb, gpu_utilization, gpu_str = self._query_gpu_metrics()
         except Exception:
             pass
         
@@ -161,12 +162,12 @@ class LLMClient:
             except Exception as e:
                 logger.debug("Failed to query LM Studio GPU status: %s", e)
         
-        # Fallback to nvidia-smi if no GPU info
+        # Fallback to local GPU CLI query if no GPU info
         if not gpu_str:
             try:
-                gpu_memory_gb, gpu_utilization, gpu_str = self._query_nvidia_smi_gpu()
+                gpu_memory_gb, gpu_utilization, gpu_str = self._query_gpu_metrics()
             except Exception as e:
-                logger.debug("Failed to query nvidia-smi: %s", e)
+                logger.debug("Failed to query GPU status: %s", e)
         
         return LLMResponse(
             provider, 
@@ -188,38 +189,153 @@ class LLMClient:
     def _timeout(self) -> int:
         return self.config.timeout_seconds
 
-    def _query_nvidia_smi_gpu(self) -> tuple[float | None, int | None, str]:
-        """Query nvidia-smi for GPU memory and utilization.
-        
-        Returns: (memory_gb, utilization_percent, status_string)
-        """
-        import subprocess
-        
+    def _query_gpu_metrics(self) -> tuple[float | None, int | None, str]:
+        """Query the system GPU status, preferring NVIDIA then AMD/ROCm tools."""
+        gpu_memory_gb = None
+        gpu_utilization = None
+        gpu_str = ""
+
         try:
-            # Query: GPU memory used (MB), GPU memory total (MB), GPU utilization (%)
-            cmd = [
-                "nvidia-smi",
-                "--query-gpu=memory.used,memory.total,utilization.gpu",
-                "--format=csv,nounits,noheader",
-            ]
-            output = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-            if output.returncode == 0:
-                line = output.stdout.strip().split("\n")[0]
-                parts = [p.strip() for p in line.split(",")]
-                if len(parts) >= 3:
-                    try:
-                        memory_used_mb = float(parts[0])
-                        memory_total_mb = float(parts[1])
-                        utilization = int(float(parts[2]))
-                        memory_gb = memory_used_mb / 1024.0
-                        return memory_gb, utilization, f"{memory_gb:.1f} GB @ {utilization}%"
-                    except (ValueError, IndexError):
-                        pass
+            gpu_memory_gb, gpu_utilization, gpu_str = self._query_nvidia_smi_gpu()
         except Exception:
             pass
+
+        if not gpu_str:
+            try:
+                gpu_memory_gb, gpu_utilization, gpu_str = self._query_amd_rocm_smi_gpu()
+            except Exception:
+                pass
+
+        return gpu_memory_gb, gpu_utilization, gpu_str
+
+    def _parse_amd_rocm_value(self, value):
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            match = re.search(r"(-?\d+(?:\.\d+)?)", value)
+            if match:
+                try:
+                    return float(match.group(1))
+                except ValueError:
+                    return None
+        return None
+
+    def _query_amd_rocm_smi_gpu(self) -> tuple[float | None, int | None, str]:
+        """Query AMD/ROCm GPU usage from rocm-smi or amd-smi."""
+        import subprocess
+
+        commands = [
+            ["rocm-smi", "--showuse", "--showmem", "--json"],
+            ["amd-smi", "--showuse", "--showmem", "--json"],
+            ["rocm-smi", "--showuse", "--showmem"],
+            ["amd-smi", "--showuse", "--showmem"],
+            ["rocm-smi", "--json"],
+            ["amd-smi", "--json"],
+        ]
+
+        for cmd in commands:
+            try:
+                output = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            except FileNotFoundError:
+                continue
+            if output.returncode != 0 or not output.stdout:
+                continue
+            text = output.stdout.strip()
+            if not text:
+                continue
+
+            if text.startswith("{") or text.startswith("["):
+                try:
+                    payload = json.loads(text)
+                except json.JSONDecodeError:
+                    payload = None
+                if payload is not None:
+                    parsed = self._parse_amd_rocm_json(payload)
+                    if parsed is not None:
+                        memory_gb, utilization, gpu_str = parsed
+                        if gpu_str:
+                            return memory_gb, utilization, gpu_str
+            else:
+                parsed = self._parse_amd_rocm_text(text)
+                if parsed is not None:
+                    memory_gb, utilization, gpu_str = parsed
+                    if gpu_str:
+                        return memory_gb, utilization, gpu_str
+
         return None, None, ""
 
-    def _query_lm_studio_gpu(self, base_url: str, api_key: str) -> tuple[str, float | None, int | None]:
+    def _parse_amd_rocm_json(self, payload):
+        if isinstance(payload, dict):
+            items = payload.items()
+        elif isinstance(payload, list):
+            items = enumerate(payload)
+        else:
+            return None
+
+        for key, device in items:
+            if not isinstance(device, dict):
+                continue
+            memory_used = None
+            memory_total = None
+            utilization = None
+            gpu_name = str(key)
+            for field, value in device.items():
+                field_key = str(field).lower()
+                parsed_value = self._parse_amd_rocm_value(value)
+                if parsed_value is None:
+                    continue
+                if "used" in field_key and "memory" in field_key:
+                    memory_used = parsed_value
+                elif ("total" in field_key and "memory" in field_key) or ("vram" in field_key and "total" in field_key):
+                    memory_total = parsed_value
+                elif "gpu use" in field_key or "gpu utilization" in field_key or "use (%)" in field_key or "utilization (%)" in field_key or "use" == field_key:
+                    utilization = int(parsed_value)
+                elif "memory" in field_key and "used" in field_key and memory_used is None:
+                    memory_used = parsed_value
+
+            memory_gb = memory_used / 1024.0 if memory_used is not None else None
+            if memory_gb is not None or utilization is not None:
+                parts = []
+                if memory_gb is not None:
+                    parts.append(f"{memory_gb:.1f} GB")
+                if utilization is not None:
+                    parts.append(f"{utilization}%")
+                return memory_gb, utilization, f"{gpu_name} @ {' · '.join(parts)}"
+
+        return None
+
+    def _parse_amd_rocm_text(self, text: str):
+        memory_used = None
+        memory_total = None
+        utilization = None
+        for line in text.splitlines():
+            if ":" not in line:
+                continue
+            field, value = line.split(":", 1)
+            field_key = field.strip().lower()
+            parsed_value = self._parse_amd_rocm_value(value)
+            if parsed_value is None:
+                continue
+            if "used" in field_key and "memory" in field_key:
+                memory_used = parsed_value
+            elif ("total" in field_key and "memory" in field_key) or ("vram" in field_key and "total" in field_key):
+                memory_total = parsed_value
+            elif "gpu use" in field_key or "gpu utilization" in field_key or "utilization" in field_key:
+                utilization = int(parsed_value)
+
+        memory_gb = memory_used / 1024.0 if memory_used is not None else None
+        if memory_gb is not None or utilization is not None:
+            parts = []
+            if memory_gb is not None:
+                parts.append(f"{memory_gb:.1f} GB")
+            if utilization is not None:
+                parts.append(f"{utilization}%")
+            gpu_str = " @ ".join(parts) if parts else ""
+            return memory_gb, utilization, gpu_str
+
+        return None
         """Query LM Studio API for GPU metrics.
         
         Returns: (status_string, memory_gb, utilization_percent)
