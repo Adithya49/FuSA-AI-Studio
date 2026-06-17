@@ -43,7 +43,7 @@ def _split_think_sections(text: str) -> tuple[str, list[str]]:
 def _render_response_text(text: str) -> None:
     visible_text, reasoning_sections = _split_think_sections(text)
     if reasoning_sections:
-        with st.expander("Show model reasoning", expanded=False):
+        with st.expander("LLM is working on the answer", expanded=False):
             for section in reasoning_sections:
                 if section.strip():
                     st.markdown(section.strip())
