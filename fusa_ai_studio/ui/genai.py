@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from datetime import date
 import json
+import re
 from typing import TypeVar
 
 import streamlit as st
@@ -14,6 +15,40 @@ import traceback
 import hashlib
 
 logger = logging_config.get_logger(__name__)
+
+THINK_BLOCK_RE = re.compile(r"<think\b[^>]*>(.*?)</think\s*>", re.IGNORECASE | re.DOTALL)
+
+
+def _split_think_sections(text: str) -> tuple[str, list[str]]:
+    """Split model reasoning blocks from the user-visible answer.
+
+    Some models emit reasoning inside <think>...</think> tags. Those blocks
+    should be shown in a collapsible section instead of being rendered as part
+    of the main response.
+    """
+    reasoning_sections: list[str] = []
+
+    def _replace(match: re.Match[str]) -> str:
+        content = match.group(1).strip()
+        if content:
+            reasoning_sections.append(content)
+        return "\n"
+
+    visible = THINK_BLOCK_RE.sub(_replace, text)
+    visible = re.sub(r"\n{3,}", "\n\n", visible)
+    visible = visible.strip()
+    return visible, reasoning_sections
+
+
+def _render_response_text(text: str) -> None:
+    visible_text, reasoning_sections = _split_think_sections(text)
+    if reasoning_sections:
+        with st.expander("Show model reasoning", expanded=False):
+            for section in reasoning_sections:
+                if section.strip():
+                    st.markdown(section.strip())
+    if visible_text:
+        st.markdown(visible_text)
 
 
 def _log_exception(message: str, exc: BaseException) -> None:
@@ -484,7 +519,7 @@ def render_ai_response_with_chat(services, project_id: str, feature: str, answer
     # Ensure draft key exists to avoid KeyError on widget-driven reruns
     st.session_state.setdefault(draft_key, answer_text)
 
-    st.markdown(st.session_state[draft_key])
+    _render_response_text(st.session_state[draft_key])
     try:
         caption_items = [f"Provider: {answer.provider}", f"Model: {answer.model}"]
         

@@ -4,6 +4,7 @@ from fusa_ai_studio.ai.chunking import ChunkingEngine
 from fusa_ai_studio.ai.embeddings import EmbeddingEngine
 from fusa_ai_studio.core.asil import calculate_asil
 from fusa_ai_studio.core.config import detect_llm_provider
+from fusa_ai_studio.ui.genai import _split_think_sections
 
 
 def test_asil_calculation() -> None:
@@ -28,3 +29,12 @@ def test_detect_llm_provider_falls_back_to_gemini(monkeypatch) -> None:
     monkeypatch.delenv("FUSA_LLM_PROVIDER", raising=False)
     monkeypatch.setenv("GEMINI_API_KEY", "abc")
     assert detect_llm_provider() == "Gemini"
+
+
+def test_split_think_sections_removes_reasoning_from_visible_output() -> None:
+    visible, reasoning = _split_think_sections(
+        "<think>First think through the problem.</think>\n\nFinal answer."
+    )
+
+    assert reasoning == ["First think through the problem."]
+    assert visible == "Final answer."
